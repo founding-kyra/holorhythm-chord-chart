@@ -28,12 +28,6 @@ export default function AuthScreen() {
     }
   };
 
-  const handleGoogle = async () => {
-    setError(null);
-    const { error } = await supabase.auth.signInWithOAuth({ provider: 'google' });
-    if (error) setError(error.message);
-  };
-
   return (
     <div className="auth-screen">
       <div className="auth-card">
@@ -70,10 +64,6 @@ export default function AuthScreen() {
             {mode === 'signin' ? 'Sign in' : 'Sign up'}
           </button>
         </form>
-
-        <button className="btn auth-google" onClick={handleGoogle}>
-          Continue with Google
-        </button>
 
         <button
           className="auth-switch"

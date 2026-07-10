@@ -1291,12 +1291,6 @@ body {
   justify-content: center;
 }
 
-.auth-google {
-  margin-top: 10px;
-  text-align: center;
-  justify-content: center;
-}
-
 .auth-switch {
   margin-top: 16px;
   border: none;
