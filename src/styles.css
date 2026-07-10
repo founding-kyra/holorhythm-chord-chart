@@ -1221,6 +1221,115 @@ body {
 ::-webkit-scrollbar-track { background: transparent; }
 ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
 
+/* ---- Auth Screen ---- */
+
+.auth-screen {
+  height: 100vh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--bg);
+}
+
+.auth-card {
+  width: 340px;
+  max-width: 90vw;
+  padding: 28px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  box-shadow: var(--shadow);
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+}
+
+.auth-title {
+  font-size: 17px;
+  font-weight: 700;
+  text-align: center;
+  margin-bottom: 4px;
+}
+
+.auth-subtitle {
+  font-size: 13px;
+  color: var(--text-muted);
+  text-align: center;
+  margin-bottom: 20px;
+}
+
+.auth-form {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.auth-input {
+  padding: 9px 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--bg);
+  color: var(--fg);
+  font-size: 13px;
+  font-family: inherit;
+  outline: none;
+}
+.auth-input:focus { border-color: var(--accent); }
+
+.auth-error {
+  font-size: 12px;
+  color: var(--danger);
+}
+
+.auth-info {
+  font-size: 12px;
+  color: var(--accent);
+}
+
+.auth-submit {
+  margin-top: 4px;
+  text-align: center;
+  justify-content: center;
+}
+
+.auth-google {
+  margin-top: 10px;
+  text-align: center;
+  justify-content: center;
+}
+
+.auth-switch {
+  margin-top: 16px;
+  border: none;
+  background: transparent;
+  color: var(--text-muted);
+  font-size: 12px;
+  cursor: pointer;
+  text-align: center;
+  font-family: inherit;
+}
+.auth-switch:hover { color: var(--fg); }
+
+.auth-loading {
+  height: 100vh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--text-muted);
+  font-size: 14px;
+}
+
+.auth-loading-error {
+  flex-direction: column;
+  gap: 16px;
+  text-align: center;
+  padding: 24px;
+}
+
+.auth-loading-actions {
+  display: flex;
+  gap: 8px;
+}
+
 /* ---- Responsive ---- */
 
 @media (max-width: 768px) {

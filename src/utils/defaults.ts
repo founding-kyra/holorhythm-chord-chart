@@ -2,7 +2,7 @@ import { ChartData } from '../types';
 
 export function createDefaultExampleChart(): ChartData {
   return {
-    id: 'example-c7sharp5',
+    id: crypto.randomUUID(),
     title: 'C7#5',
     nutThickness: 'thick',
     startFret: 0,
@@ -27,7 +27,7 @@ export function createDefaultExampleChart(): ChartData {
 
 export function createDefaultExampleSheet() {
   return {
-    id: 'example-sheet-summertime',
+    id: crypto.randomUUID(),
     title: 'Summertime - Jazz Voicings',
     slots: [
       'example-c7sharp5',

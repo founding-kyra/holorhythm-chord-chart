@@ -1,10 +1,14 @@
-import React, { createContext, useContext, useReducer, useEffect, useCallback } from 'react';
+import React, { createContext, useContext, useReducer, useEffect, useRef, useState } from 'react';
 import { ChartData, SheetData, TrashedChart, TrashedSheet, ThemeMode, createEmptyChart, createEmptySheet } from '../types';
-import { loadCharts, saveCharts, loadSheets, saveSheets, loadTrash, saveTrash, loadTrashedSheets, saveTrashedSheets } from './StorageService';
+import { loadCharts, saveCharts, loadSheets, saveSheets, loadTrash, loadTrashedSheets } from './StorageService';
 import { createDefaultExampleChart } from '../utils/defaults';
+
+const SAVE_DEBOUNCE_MS = 500;
 
 interface AppState {
   theme: ThemeMode;
+  isLoading: boolean;
+  loadError: string | null;
   charts: ChartData[];
   sheets: SheetData[];
   trashedCharts: TrashedChart[];
@@ -18,6 +22,9 @@ interface AppState {
 
 type Action =
   | { type: 'SET_THEME'; theme: ThemeMode }
+  | { type: 'HYDRATE'; charts: ChartData[]; sheets: SheetData[]; trashedCharts: TrashedChart[]; trashedSheets: TrashedSheet[] }
+  | { type: 'HYDRATE_ERROR'; error: string }
+  | { type: 'RETRY_HYDRATE' }
   | { type: 'SET_CURRENT_CHART'; chart: ChartData }
   | { type: 'UPDATE_CURRENT_CHART'; chart: Partial<ChartData> }
   | { type: 'SAVE_CHART' }
@@ -45,6 +52,23 @@ function reducer(state: AppState, action: Action): AppState {
   switch (action.type) {
     case 'SET_THEME':
       return { ...state, theme: action.theme };
+
+    case 'HYDRATE':
+      return {
+        ...state,
+        charts: action.charts,
+        sheets: action.sheets,
+        trashedCharts: action.trashedCharts,
+        trashedSheets: action.trashedSheets,
+        isLoading: false,
+        loadError: null,
+      };
+
+    case 'HYDRATE_ERROR':
+      return { ...state, isLoading: false, loadError: action.error };
+
+    case 'RETRY_HYDRATE':
+      return { ...state, isLoading: true, loadError: null };
 
     case 'SET_CURRENT_CHART':
       return { ...state, currentChart: action.chart, selectedMarkerId: null };
@@ -172,24 +196,18 @@ function reducer(state: AppState, action: Action): AppState {
 const AppContext = createContext<{
   state: AppState;
   dispatch: React.Dispatch<Action>;
+  retryHydrate: () => void;
 } | null>(null);
 
 export function AppProvider({ children }: { children: React.ReactNode }) {
-  const savedCharts = loadCharts();
-  const savedSheets = loadSheets();
-  const savedTrash = loadTrash();
-  const savedTrashedSheets = loadTrashedSheets();
-
-  // Ensure there's a default example chart
-  const hasExample = savedCharts.some(c => c.title === 'C7#5');
-  const initialCharts = hasExample ? savedCharts : [createDefaultExampleChart(), ...savedCharts];
-
   const [state, dispatch] = useReducer(reducer, {
     theme: (localStorage.getItem('holorhythm_theme') as ThemeMode) || 'light',
-    charts: initialCharts,
-    sheets: savedSheets,
-    trashedCharts: savedTrash,
-    trashedSheets: savedTrashedSheets,
+    isLoading: true,
+    loadError: null,
+    charts: [],
+    sheets: [],
+    trashedCharts: [],
+    trashedSheets: [],
     currentChart: createEmptyChart(),
     currentSheet: createEmptySheet(),
     activeView: 'editor',
@@ -197,22 +215,64 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     focusedInputId: null,
   });
 
-  // Persist on changes
-  useEffect(() => {
-    saveCharts(state.charts);
-  }, [state.charts]);
+  // Load everything from the database once, after login (and again on retry).
+  const [reloadToken, setReloadToken] = useState(0);
 
   useEffect(() => {
-    saveSheets(state.sheets);
-  }, [state.sheets]);
+    let cancelled = false;
 
-  useEffect(() => {
-    saveTrash(state.trashedCharts);
-  }, [state.trashedCharts]);
+    (async () => {
+      try {
+        const [charts, sheets, trashedCharts, trashedSheets] = await Promise.all([
+          loadCharts(),
+          loadSheets(),
+          loadTrash(),
+          loadTrashedSheets(),
+        ]);
 
+        if (cancelled) return;
+
+        const hasExample = charts.some(c => c.title === 'C7#5');
+        const hydratedCharts = hasExample ? charts : [createDefaultExampleChart(), ...charts];
+
+        dispatch({ type: 'HYDRATE', charts: hydratedCharts, sheets, trashedCharts, trashedSheets });
+      } catch (err) {
+        if (cancelled) return;
+        const message = err && typeof err === 'object' && 'message' in err
+          ? String((err as { message: unknown }).message)
+          : 'Failed to load your library.';
+        dispatch({ type: 'HYDRATE_ERROR', error: message });
+      }
+    })();
+
+    return () => { cancelled = true; };
+  }, [reloadToken]);
+
+  const retryHydrate = () => {
+    dispatch({ type: 'RETRY_HYDRATE' });
+    setReloadToken(t => t + 1);
+  };
+
+  // Debounced persistence — avoid a database write on every keystroke.
+  const chartsSaveTimer = useRef<ReturnType<typeof setTimeout>>();
   useEffect(() => {
-    saveTrashedSheets(state.trashedSheets);
-  }, [state.trashedSheets]);
+    if (state.isLoading) return;
+    clearTimeout(chartsSaveTimer.current);
+    chartsSaveTimer.current = setTimeout(() => {
+      saveCharts(state.charts, state.trashedCharts);
+    }, SAVE_DEBOUNCE_MS);
+    return () => clearTimeout(chartsSaveTimer.current);
+  }, [state.charts, state.trashedCharts, state.isLoading]);
+
+  const sheetsSaveTimer = useRef<ReturnType<typeof setTimeout>>();
+  useEffect(() => {
+    if (state.isLoading) return;
+    clearTimeout(sheetsSaveTimer.current);
+    sheetsSaveTimer.current = setTimeout(() => {
+      saveSheets(state.sheets, state.trashedSheets);
+    }, SAVE_DEBOUNCE_MS);
+    return () => clearTimeout(sheetsSaveTimer.current);
+  }, [state.sheets, state.trashedSheets, state.isLoading]);
 
   useEffect(() => {
     localStorage.setItem('holorhythm_theme', state.theme);
@@ -220,7 +280,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   }, [state.theme]);
 
   return (
-    <AppContext.Provider value={{ state, dispatch }}>
+    <AppContext.Provider value={{ state, dispatch, retryHydrate }}>
       {children}
     </AppContext.Provider>
   );
