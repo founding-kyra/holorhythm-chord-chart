@@ -7,13 +7,13 @@ import App from './App';
 import './styles.css';
 
 function AuthGate() {
-  const { user, loading } = useAuth();
+  const { signedIn, loading } = useAuth();
 
   if (loading) {
     return <div className="auth-loading">Loading…</div>;
   }
 
-  if (!user) {
+  if (!signedIn) {
     return <AuthScreen />;
   }
 

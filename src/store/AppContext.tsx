@@ -1,6 +1,7 @@
 import React, { createContext, useContext, useReducer, useEffect, useRef, useState } from 'react';
 import { ChartData, SheetData, TrashedChart, TrashedSheet, ThemeMode, createEmptyChart, createEmptySheet } from '../types';
-import { loadCharts, saveCharts, loadSheets, saveSheets, loadTrash, loadTrashedSheets } from './StorageService';
+import { Library, ConflictError, UnauthorizedError, loadLibrary, saveLibrary } from './StorageService';
+import { useAuth } from './AuthContext';
 import { createDefaultExampleChart } from '../utils/defaults';
 
 const SAVE_DEBOUNCE_MS = 500;
@@ -9,6 +10,8 @@ interface AppState {
   theme: ThemeMode;
   isLoading: boolean;
   loadError: string | null;
+  /** Set when a save was rejected or failed; the UI shows a banner. */
+  saveError: { message: string; conflict: boolean } | null;
   charts: ChartData[];
   sheets: SheetData[];
   trashedCharts: TrashedChart[];
@@ -24,6 +27,8 @@ type Action =
   | { type: 'SET_THEME'; theme: ThemeMode }
   | { type: 'HYDRATE'; charts: ChartData[]; sheets: SheetData[]; trashedCharts: TrashedChart[]; trashedSheets: TrashedSheet[] }
   | { type: 'HYDRATE_ERROR'; error: string }
+  | { type: 'SAVE_ERROR'; message: string; conflict: boolean }
+  | { type: 'SAVE_OK' }
   | { type: 'RETRY_HYDRATE' }
   | { type: 'SET_CURRENT_CHART'; chart: ChartData }
   | { type: 'UPDATE_CURRENT_CHART'; chart: Partial<ChartData> }
@@ -66,6 +71,12 @@ function reducer(state: AppState, action: Action): AppState {
 
     case 'HYDRATE_ERROR':
       return { ...state, isLoading: false, loadError: action.error };
+
+    case 'SAVE_ERROR':
+      return { ...state, saveError: { message: action.message, conflict: action.conflict } };
+
+    case 'SAVE_OK':
+      return state.saveError ? { ...state, saveError: null } : state;
 
     case 'RETRY_HYDRATE':
       return { ...state, isLoading: true, loadError: null };
@@ -204,6 +215,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     theme: (localStorage.getItem('holorhythm_theme') as ThemeMode) || 'light',
     isLoading: true,
     loadError: null,
+    saveError: null,
     charts: [],
     sheets: [],
     trashedCharts: [],
@@ -215,7 +227,16 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     focusedInputId: null,
   });
 
-  // Load everything from the database once, after login (and again on retry).
+  const { signOut } = useAuth();
+
+  // Version of the library this tab last loaded/saved, and what that content looked like.
+  // Used so a save is skipped when nothing changed, and rejected if someone else saved first.
+  const versionRef = useRef(0);
+  const lastSavedRef = useRef('');
+  // Set after a conflict: stop saving so this tab can't overwrite the newer library.
+  const blockedRef = useRef(false);
+
+  // Load the shared library once after login (and again on retry).
   const [reloadToken, setReloadToken] = useState(0);
 
   useEffect(() => {
@@ -223,29 +244,36 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
 
     (async () => {
       try {
-        const [charts, sheets, trashedCharts, trashedSheets] = await Promise.all([
-          loadCharts(),
-          loadSheets(),
-          loadTrash(),
-          loadTrashedSheets(),
-        ]);
-
+        const { library, version } = await loadLibrary();
         if (cancelled) return;
 
-        const hasExample = charts.some(c => c.title === 'C7#5');
-        const hydratedCharts = hasExample ? charts : [createDefaultExampleChart(), ...charts];
+        const loaded: Library = {
+          charts: library?.charts ?? [],
+          sheets: library?.sheets ?? [],
+          trashedCharts: library?.trashedCharts ?? [],
+          trashedSheets: library?.trashedSheets ?? [],
+        };
+        versionRef.current = version;
+        lastSavedRef.current = JSON.stringify(loaded);
+        blockedRef.current = false;
 
-        dispatch({ type: 'HYDRATE', charts: hydratedCharts, sheets, trashedCharts, trashedSheets });
+        const hasExample = loaded.charts.some(c => c.title === 'C7#5');
+        const charts = hasExample ? loaded.charts : [createDefaultExampleChart(), ...loaded.charts];
+
+        dispatch({ type: 'HYDRATE', ...loaded, charts });
       } catch (err) {
         if (cancelled) return;
-        const message = err && typeof err === 'object' && 'message' in err
-          ? String((err as { message: unknown }).message)
-          : 'Failed to load your library.';
+        if (err instanceof UnauthorizedError) {
+          signOut();
+          return;
+        }
+        const message = err instanceof Error ? err.message : 'Failed to load your library.';
         dispatch({ type: 'HYDRATE_ERROR', error: message });
       }
     })();
 
     return () => { cancelled = true; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [reloadToken]);
 
   const retryHydrate = () => {
@@ -253,26 +281,44 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     setReloadToken(t => t + 1);
   };
 
-  // Debounced persistence — avoid a database write on every keystroke.
-  const chartsSaveTimer = useRef<ReturnType<typeof setTimeout>>();
+  // Debounced persistence — avoid a write on every keystroke. Saves run one at a time
+  // so each one uses the version number the previous one returned.
+  const saveTimer = useRef<ReturnType<typeof setTimeout>>();
+  const saveChain = useRef<Promise<void>>(Promise.resolve());
   useEffect(() => {
-    if (state.isLoading) return;
-    clearTimeout(chartsSaveTimer.current);
-    chartsSaveTimer.current = setTimeout(() => {
-      saveCharts(state.charts, state.trashedCharts);
-    }, SAVE_DEBOUNCE_MS);
-    return () => clearTimeout(chartsSaveTimer.current);
-  }, [state.charts, state.trashedCharts, state.isLoading]);
+    if (state.isLoading || state.loadError) return;
+    const library: Library = {
+      charts: state.charts,
+      sheets: state.sheets,
+      trashedCharts: state.trashedCharts,
+      trashedSheets: state.trashedSheets,
+    };
 
-  const sheetsSaveTimer = useRef<ReturnType<typeof setTimeout>>();
-  useEffect(() => {
-    if (state.isLoading) return;
-    clearTimeout(sheetsSaveTimer.current);
-    sheetsSaveTimer.current = setTimeout(() => {
-      saveSheets(state.sheets, state.trashedSheets);
+    clearTimeout(saveTimer.current);
+    saveTimer.current = setTimeout(() => {
+      saveChain.current = saveChain.current.then(async () => {
+        const json = JSON.stringify(library);
+        if (blockedRef.current || json === lastSavedRef.current) return;
+        try {
+          versionRef.current = await saveLibrary(library, versionRef.current);
+          lastSavedRef.current = json;
+          dispatch({ type: 'SAVE_OK' });
+        } catch (err) {
+          if (err instanceof UnauthorizedError) {
+            signOut();
+          } else if (err instanceof ConflictError) {
+            blockedRef.current = true;
+            dispatch({ type: 'SAVE_ERROR', message: err.message, conflict: true });
+          } else {
+            const message = err instanceof Error ? err.message : 'Could not save your changes.';
+            dispatch({ type: 'SAVE_ERROR', message, conflict: false });
+          }
+        }
+      });
     }, SAVE_DEBOUNCE_MS);
-    return () => clearTimeout(sheetsSaveTimer.current);
-  }, [state.sheets, state.trashedSheets, state.isLoading]);
+    return () => clearTimeout(saveTimer.current);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [state.charts, state.sheets, state.trashedCharts, state.trashedSheets, state.isLoading, state.loadError]);
 
   useEffect(() => {
     localStorage.setItem('holorhythm_theme', state.theme);

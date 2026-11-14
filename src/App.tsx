@@ -29,6 +29,18 @@ export default function App() {
 
   return (
     <div className="app-container">
+      {state.saveError && (
+        <div className="save-banner" role="alert">
+          <span>
+            {state.saveError.conflict
+              ? "This library was changed on another device, so your latest edits here weren't saved. Reload to get the newest version (edits made in this tab since then will be lost)."
+              : `Couldn't save your changes: ${state.saveError.message} It will retry on your next edit.`}
+          </span>
+          {state.saveError.conflict && (
+            <button className="btn btn-sm" onClick={() => window.location.reload()}>Reload</button>
+          )}
+        </div>
+      )}
       <header className="app-header">
         <h1 className="app-title">HoloRhythm Chord Chart Builder</h1>
         <nav className="app-nav">

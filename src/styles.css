@@ -1319,6 +1319,20 @@ body {
   padding: 24px;
 }
 
+.save-banner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 8px 20px;
+  background: var(--danger);
+  color: #fff;
+  font-size: 13px;
+  flex-shrink: 0;
+}
+.save-banner .btn { color: #fff; border-color: #fff; }
+.save-banner .btn:hover { background: rgba(255,255,255,0.2); }
+
 .auth-loading-actions {
   display: flex;
   gap: 8px;

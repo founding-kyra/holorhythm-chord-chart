@@ -1,39 +1,52 @@
-import React, { createContext, useContext, useEffect, useState } from 'react';
-import type { Session, User } from '@supabase/supabase-js';
-import { supabase } from '../lib/supabase';
+import React, { createContext, useCallback, useContext, useEffect, useState } from 'react';
 
 interface AuthContextValue {
-  user: User | null;
+  signedIn: boolean;
   loading: boolean;
+  /** Returns an error message, or null on success. */
+  signIn: (passcode: string) => Promise<string | null>;
   signOut: () => Promise<void>;
 }
 
 const AuthContext = createContext<AuthContextValue | null>(null);
 
 export function AuthProvider({ children }: { children: React.ReactNode }) {
-  const [session, setSession] = useState<Session | null>(null);
+  const [signedIn, setSignedIn] = useState(false);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    supabase.auth.getSession().then(({ data }) => {
-      setSession(data.session);
-      setLoading(false);
-    });
-
-    const { data: listener } = supabase.auth.onAuthStateChange((_event, newSession) => {
-      setSession(newSession);
-      setLoading(false);
-    });
-
-    return () => listener.subscription.unsubscribe();
+    fetch('/api/session', { credentials: 'same-origin' })
+      .then(res => setSignedIn(res.ok))
+      .catch(() => setSignedIn(false))
+      .finally(() => setLoading(false));
   }, []);
 
-  const signOut = async () => {
-    await supabase.auth.signOut();
-  };
+  const signIn = useCallback(async (passcode: string) => {
+    try {
+      const res = await fetch('/api/login', {
+        method: 'POST',
+        credentials: 'same-origin',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ passcode }),
+      });
+      if (res.ok) {
+        setSignedIn(true);
+        return null;
+      }
+      const body = (await res.json().catch(() => ({}))) as { error?: string };
+      return body.error ?? 'Could not sign in.';
+    } catch {
+      return 'Could not reach the server. Check your connection.';
+    }
+  }, []);
+
+  const signOut = useCallback(async () => {
+    await fetch('/api/logout', { method: 'POST', credentials: 'same-origin' }).catch(() => {});
+    setSignedIn(false);
+  }, []);
 
   return (
-    <AuthContext.Provider value={{ user: session?.user ?? null, loading, signOut }}>
+    <AuthContext.Provider value={{ signedIn, loading, signIn, signOut }}>
       {children}
     </AuthContext.Provider>
   );

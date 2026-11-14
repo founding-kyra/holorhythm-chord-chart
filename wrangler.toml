@@ -1,0 +1,9 @@
+name = "holorhythm-chord-chart"
+compatibility_date = "2026-11-01"
+pages_build_output_dir = "./dist"
+
+[[d1_databases]]
+binding = "DB"
+database_name = "holorhythm-chord-chart"
+database_id = "b80fe314-7555-4978-a068-0b4698ff02b2"
+migrations_dir = "migrations"
