@@ -172,7 +172,7 @@ export default function ChartLibrary() {
             value={search}
             onChange={e => { setSearch(e.target.value); setTagFilter(null); }}
           />
-          <button className="btn btn-secondary" onClick={() => dispatch({ type: 'SET_ACTIVE_VIEW', view: 'editor' })}>
+          <button className="btn btn-secondary toolbar-nav" onClick={() => dispatch({ type: 'SET_ACTIVE_VIEW', view: 'editor' })}>
             Back to Editor
           </button>
         </div>

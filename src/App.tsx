@@ -1,15 +1,38 @@
-import React from 'react';
+import React, { useEffect, useState } from 'react';
 import { useApp } from './store/AppContext';
 import { useAuth } from './store/AuthContext';
 import ChartEditor from './components/ChartEditor';
 import ChartLibrary from './components/ChartLibrary';
 import LessonSheetComposer from './components/LessonSheetComposer';
 import ThemeToggle from './components/ThemeToggle';
+import { MenuIcon, EditorIcon, LibraryIcon, SheetIcon, MoonIcon, SunIcon, SignOutIcon } from './components/Icons';
+
+type View = 'editor' | 'library' | 'composer';
+const VIEWS: { id: View; label: string; Icon: typeof EditorIcon }[] = [
+  { id: 'editor', label: 'Editor', Icon: EditorIcon },
+  { id: 'library', label: 'Library', Icon: LibraryIcon },
+  { id: 'composer', label: 'Lesson Sheet', Icon: SheetIcon },
+];
 
 export default function App() {
   const { state, dispatch, retryHydrate } = useApp();
   const { signOut } = useAuth();
   const { activeView } = state;
+  const [drawerOpen, setDrawerOpen] = useState(false);
+
+  useEffect(() => {
+    if (!drawerOpen) return;
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') setDrawerOpen(false); };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [drawerOpen]);
+
+  const goTo = (view: View) => {
+    dispatch({ type: 'SET_ACTIVE_VIEW', view });
+    setDrawerOpen(false);
+  };
+  const currentLabel = VIEWS.find(v => v.id === activeView)?.label ?? '';
+  const isDark = state.theme === 'dark';
 
   if (state.isLoading) {
     return <div className="auth-loading">Loading your library…</div>;
@@ -42,7 +65,15 @@ export default function App() {
         </div>
       )}
       <header className="app-header">
-        <h1 className="app-title">HoloRhythm Chord Chart Builder</h1>
+        <button className="icon-btn menu-btn" onClick={() => setDrawerOpen(true)} aria-label="Open menu">
+          <MenuIcon />
+        </button>
+        <h1 className="app-title">
+          <span className="title-full">HoloRhythm Chord Chart Builder</span>
+          <span className="title-short">{currentLabel}</span>
+        </h1>
+        {/* On phones the editor puts its New / Save icon buttons here */}
+        <div className="header-actions" id="header-actions" />
         <nav className="app-nav">
           <button
             className={`nav-btn ${activeView === 'editor' ? 'active' : ''}`}
@@ -63,9 +94,31 @@ export default function App() {
             Lesson Sheet
           </button>
         </nav>
-        <ThemeToggle />
-        <button className="btn btn-sm" onClick={signOut}>Sign out</button>
+        <div className="header-desktop">
+          <ThemeToggle />
+          <button className="btn btn-sm" onClick={signOut}>Sign out</button>
+        </div>
       </header>
+
+      {drawerOpen && (
+        <div className="drawer-overlay" onClick={() => setDrawerOpen(false)}>
+          <aside className="drawer" onClick={e => e.stopPropagation()} aria-label="Menu">
+            <div className="drawer-heading">HoloRhythm<br />Chord Chart Builder</div>
+            {VIEWS.map(({ id, label, Icon }) => (
+              <button key={id} className={`drawer-item ${activeView === id ? 'active' : ''}`} onClick={() => goTo(id)}>
+                <Icon /> {label}
+              </button>
+            ))}
+            <div className="drawer-spacer" />
+            <button className="drawer-item" onClick={() => dispatch({ type: 'SET_THEME', theme: isDark ? 'light' : 'dark' })}>
+              {isDark ? <SunIcon /> : <MoonIcon />} {isDark ? 'Light mode' : 'Dark mode'}
+            </button>
+            <button className="drawer-item" onClick={() => { setDrawerOpen(false); signOut(); }}>
+              <SignOutIcon /> Sign out
+            </button>
+          </aside>
+        </div>
+      )}
 
       <main className="app-main">
         {activeView === 'editor' && <ChartEditor />}

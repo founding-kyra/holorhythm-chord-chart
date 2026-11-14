@@ -267,10 +267,10 @@ export default function LessonSheetComposer() {
   return (
     <div className="lesson-sheet-composer">
       <div className="composer-toolbar">
-        <button className="btn btn-secondary" onClick={() => dispatch({ type: 'SET_ACTIVE_VIEW', view: 'editor' })}>
+        <button className="btn btn-secondary toolbar-nav" onClick={() => dispatch({ type: 'SET_ACTIVE_VIEW', view: 'editor' })}>
           Back to Editor
         </button>
-        <button className="btn btn-secondary" onClick={() => dispatch({ type: 'SET_ACTIVE_VIEW', view: 'library' })}>
+        <button className="btn btn-secondary toolbar-nav" onClick={() => dispatch({ type: 'SET_ACTIVE_VIEW', view: 'library' })}>
           Library
         </button>
         <button className="btn btn-secondary" onClick={addNote}>Add Note</button>

@@ -1,8 +1,11 @@
 import React, { useState, useCallback, useEffect, useMemo, useRef } from 'react';
+import { createPortal } from 'react-dom';
 import { useApp } from '../store/AppContext';
 import { ChartMarker } from '../types';
 import ChordDiagram from './ChordDiagram';
 import FloatingKeyboard from './FloatingKeyboard';
+import { PlusIcon, SaveIcon } from './Icons';
+import { useIsPhone } from '../utils/useIsPhone';
 
 type InputTarget =
   | { type: 'title' }
@@ -21,8 +24,11 @@ export default function ChartEditor() {
   const [showUnsavedDialog, setShowUnsavedDialog] = useState(false);
   const [pendingView, setPendingView] = useState<'library' | 'composer' | null>(null);
   const [hasUnsavedChanges, setHasUnsavedChanges] = useState(false);
-  const [draggingMarker, setDraggingMarker] = useState<string | null>(null);
   const [showSaveOptions, setShowSaveOptions] = useState(false);
+  const isPhone = useIsPhone();
+  // On phones New / Save live as icon buttons in the app header instead of taking a row.
+  const [headerSlot, setHeaderSlot] = useState<HTMLElement | null>(null);
+  useEffect(() => { setHeaderSlot(document.getElementById('header-actions')); }, []);
   const lastSavedRef = useRef(JSON.stringify(currentChart));
 
   // Track unsaved changes
@@ -173,21 +179,11 @@ export default function ChartEditor() {
         break;
       }
       case 'markerLabel': {
-        const marker = currentChart.markers.find(m => m.id === activeInput.markerId);
-        if (marker && marker.label.length === 0) {
-          const markers = currentChart.markers.filter(m => m.id !== activeInput.markerId);
-          const connectors = currentChart.connectors.filter(
-            c => c.fromMarkerId !== activeInput.markerId && c.toMarkerId !== activeInput.markerId
-          );
-          updateChart({ markers, connectors });
-          dispatch({ type: 'SET_SELECTED_MARKER', id: null });
-          setActiveInput(null);
-        } else {
-          const markers = currentChart.markers.map(m =>
-            m.id === activeInput.markerId ? { ...m, label: m.label.slice(0, -1) } : m
-          );
-          updateChart({ markers });
-        }
+        // Backspace only ever removes one character. Use "Remove Marker" to delete the marker itself.
+        const markers = currentChart.markers.map(m =>
+          m.id === activeInput.markerId ? { ...m, label: m.label.slice(0, -1) } : m
+        );
+        updateChart({ markers });
         break;
       }
       case 'bottomNote': {
@@ -254,22 +250,34 @@ export default function ChartEditor() {
     [connectMode, dispatch, currentChart, updateChart]
   );
 
-  // Marker drag: move to new fret/string
-  const handleMarkerDragStart = useCallback((markerId: string) => {
-    setDraggingMarker(markerId);
-  }, []);
-
-  const handleMarkerDrop = useCallback((stringIndex: number, fretIndex: number) => {
-    if (!draggingMarker) return;
-    // Check if there's already a marker at target position
-    const existing = currentChart.markers.find(m => m.stringIndex === stringIndex && m.fretIndex === fretIndex);
-    if (existing && existing.id !== draggingMarker) return; // Don't drop on existing marker
+  // Drag a dot onto an empty spot: move it
+  const handleMarkerMove = useCallback((markerId: string, stringIndex: number, fretIndex: number) => {
+    const occupied = currentChart.markers.some(m => m.id !== markerId && m.stringIndex === stringIndex && m.fretIndex === fretIndex);
+    if (occupied) return;
     const markers = currentChart.markers.map(m =>
-      m.id === draggingMarker ? { ...m, stringIndex, fretIndex } : m
+      m.id === markerId ? { ...m, stringIndex, fretIndex } : m
     );
     updateChart({ markers });
-    setDraggingMarker(null);
-  }, [draggingMarker, currentChart, updateChart]);
+  }, [currentChart, updateChart]);
+
+  // Drag a dot onto another dot: join them with a bar line (e.g. a barre chord)
+  const handleMarkerJoin = useCallback((fromMarkerId: string, toMarkerId: string) => {
+    if (fromMarkerId === toMarkerId) return;
+    const existing = currentChart.connectors.find(c =>
+      (c.fromMarkerId === fromMarkerId && c.toMarkerId === toMarkerId) ||
+      (c.fromMarkerId === toMarkerId && c.toMarkerId === fromMarkerId)
+    );
+    if (existing) {
+      setSelectedConnectorId(existing.id);
+      return;
+    }
+    const connector = { id: crypto.randomUUID(), fromMarkerId, toMarkerId };
+    updateChart({ connectors: [...currentChart.connectors, connector] });
+    // Select the new bar so it's obvious what happened (and easy to remove).
+    setSelectedConnectorId(connector.id);
+    dispatch({ type: 'SET_SELECTED_MARKER', id: null });
+    setActiveInput(null);
+  }, [currentChart, updateChart, dispatch]);
 
   const handleConnectorClick = useCallback((connectorId: string) => {
     setSelectedConnectorId(connectorId);
@@ -504,7 +512,7 @@ export default function ChartEditor() {
       <button className="btn btn-sm" onClick={startConnect}>
         {connectMode ? 'Connecting...' : 'Connect'}
       </button>
-      <button className="btn btn-sm btn-danger" onClick={deleteMarker}>Delete</button>
+      <button className="btn btn-sm btn-danger" onClick={deleteMarker}>Remove Marker</button>
     </div>
   ) : selectedConnectorId ? (
     <div className="marker-controls">
@@ -520,7 +528,14 @@ export default function ChartEditor() {
 
   return (
     <div className="chart-editor" onClick={handleEditorBgClick}>
-      <div className="editor-toolbar">
+      {isPhone && headerSlot && createPortal(
+        <>
+          <button className="icon-btn" onClick={handleNew} aria-label="New chart" title="New chart"><PlusIcon /></button>
+          <button className="icon-btn primary" onClick={handleSave} aria-label="Save chart" title="Save chart"><SaveIcon /></button>
+        </>,
+        headerSlot
+      )}
+      {!isPhone && <div className="editor-toolbar">
         <button className="btn btn-secondary" onClick={handleNew}>New Chart</button>
         <button className="btn btn-primary" onClick={handleSave}>Save Chart</button>
         <button
@@ -535,7 +550,7 @@ export default function ChartEditor() {
         >
           Lesson Sheet
         </button>
-      </div>
+      </div>}
 
       <div className="editor-main" onClick={handleEditorBgClick}>
         <div className="diagram-container">
@@ -565,9 +580,8 @@ export default function ChartEditor() {
             onBottomIntervalLabelClick={handleBottomIntervalLabelClick}
             onConnectorClick={handleConnectorClick}
             onStartFretClick={handleFretDotClick}
-            onMarkerDragStart={handleMarkerDragStart}
-            onMarkerDrop={handleMarkerDrop}
-            draggingMarker={draggingMarker}
+            onMarkerMove={handleMarkerMove}
+            onMarkerJoin={handleMarkerJoin}
           />
         </div>
       </div>

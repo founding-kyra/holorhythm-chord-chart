@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { ChartData, ChartMarker } from '../types';
 
 interface ChordDiagramProps {
@@ -18,9 +18,10 @@ interface ChordDiagramProps {
   onConnectorClick?: (connectorId: string) => void;
   selectedConnectorId?: string | null;
   onStartFretClick?: (fretIndex: number) => void;
-  onMarkerDragStart?: (markerId: string) => void;
-  onMarkerDrop?: (stringIndex: number, fretIndex: number) => void;
-  draggingMarker?: string | null;
+  /** Called when a dot is dragged onto an empty spot. */
+  onMarkerMove?: (markerId: string, stringIndex: number, fretIndex: number) => void;
+  /** Called when a dot is dragged onto another dot (join them, e.g. for a barre). */
+  onMarkerJoin?: (fromMarkerId: string, toMarkerId: string) => void;
   svgRef?: React.Ref<SVGSVGElement>;
 }
 
@@ -29,6 +30,17 @@ const NUM_FRETS = 5;
 
 const VB_W = 200;
 const VB_H = 280;
+
+interface DragState {
+  id: string;
+  startX: number;
+  startY: number;
+  active: boolean;
+  px: number;
+  py: number;
+  joinId: string | null;
+  cell: { s: number; f: number } | null;
+}
 
 export default function ChordDiagram({
   chart,
@@ -47,9 +59,8 @@ export default function ChordDiagram({
   onConnectorClick,
   selectedConnectorId,
   onStartFretClick,
-  onMarkerDragStart,
-  onMarkerDrop,
-  draggingMarker,
+  onMarkerMove,
+  onMarkerJoin,
   svgRef,
 }: ChordDiagramProps) {
   const fg = theme === 'dark' ? '#ffffff' : '#000000';
@@ -69,6 +80,100 @@ export default function ChordDiagram({
   const getMarkerAt = (s: number, f: number): ChartMarker | undefined =>
     chart.markers.find(m => m.stringIndex === s && m.fretIndex === f);
 
+  // ── Drag a dot: onto an empty spot to move it, onto another dot to join them ──
+  const localSvg = useRef<SVGSVGElement | null>(null);
+  const [drag, setDrag] = useState<DragState | null>(null);
+  const dragRef = useRef<DragState | null>(null);
+  const suppressClick = useRef(false);
+  const cleanupRef = useRef<(() => void) | null>(null);
+  useEffect(() => () => cleanupRef.current?.(), []);
+
+  const setSvgRefs = useCallback((el: SVGSVGElement | null) => {
+    localSvg.current = el;
+    if (typeof svgRef === 'function') svgRef(el);
+    else if (svgRef) (svgRef as React.MutableRefObject<SVGSVGElement | null>).current = el;
+  }, [svgRef]);
+
+  const toSvgPoint = (clientX: number, clientY: number) => {
+    const svg = localSvg.current;
+    const ctm = svg?.getScreenCTM();
+    if (!svg || !ctm) return null;
+    const pt = svg.createSVGPoint();
+    pt.x = clientX;
+    pt.y = clientY;
+    const p = pt.matrixTransform(ctm.inverse());
+    return { x: p.x, y: p.y };
+  };
+
+  const resolveDropTarget = (px: number, py: number, originId: string) => {
+    const inGrid = px >= padLR - cellW / 2 && px <= padLR + gridW + cellW / 2 && py >= padTop && py <= padTop + gridH;
+    if (!inGrid) return { joinId: null, cell: null };
+    const s = Math.max(0, Math.min(NUM_STRINGS - 1, Math.round((px - padLR) / cellW)));
+    const f = Math.max(1, Math.min(NUM_FRETS, Math.floor((py - padTop) / cellH) + 1));
+    const occupant = getMarkerAt(s, f);
+    if (occupant && occupant.id !== originId) return { joinId: occupant.id, cell: null };
+    return { joinId: null, cell: { s, f } };
+  };
+
+  const startMarkerDrag = (e: React.PointerEvent, marker: ChartMarker) => {
+    if (!interactive) return;
+    if (e.pointerType === 'mouse' && e.button !== 0) return;
+    dragRef.current = { id: marker.id, startX: e.clientX, startY: e.clientY, active: false, px: 0, py: 0, joinId: null, cell: null };
+
+    const onMove = (ev: PointerEvent) => {
+      const st = dragRef.current;
+      if (!st) return;
+      // Small movements are still a tap (select the dot), not a drag.
+      if (!st.active && Math.hypot(ev.clientX - st.startX, ev.clientY - st.startY) < 6) return;
+      const p = toSvgPoint(ev.clientX, ev.clientY);
+      if (!p) return;
+      const next = { ...st, active: true, px: p.x, py: p.y, ...resolveDropTarget(p.x, p.y, st.id) };
+      dragRef.current = next;
+      setDrag(next);
+    };
+    // Stop the page scrolling while a dot is being dragged on a touch screen.
+    const onTouchMove = (ev: TouchEvent) => {
+      if (dragRef.current?.active && ev.cancelable) ev.preventDefault();
+    };
+    const finish = (ev: PointerEvent) => {
+      const st = dragRef.current;
+      cleanup();
+      if (!st?.active || ev.type === 'pointercancel') return;
+      // The browser sends a click after a drag; ignore it so the dot isn't re-selected.
+      suppressClick.current = true;
+      setTimeout(() => { suppressClick.current = false; }, 60);
+      if (st.joinId) onMarkerJoin?.(st.id, st.joinId);
+      else if (st.cell) {
+        const origin = chart.markers.find(m => m.id === st.id);
+        if (origin && (origin.stringIndex !== st.cell.s || origin.fretIndex !== st.cell.f)) {
+          onMarkerMove?.(st.id, st.cell.s, st.cell.f);
+        }
+      }
+    };
+    const cleanup = () => {
+      window.removeEventListener('pointermove', onMove);
+      window.removeEventListener('pointerup', finish);
+      window.removeEventListener('pointercancel', finish);
+      window.removeEventListener('touchmove', onTouchMove);
+      dragRef.current = null;
+      cleanupRef.current = null;
+      setDrag(null);
+    };
+    cleanupRef.current?.();
+    cleanupRef.current = cleanup;
+    window.addEventListener('pointermove', onMove);
+    window.addEventListener('pointerup', finish);
+    window.addEventListener('pointercancel', finish);
+    window.addEventListener('touchmove', onTouchMove, { passive: false });
+  };
+
+  const draggedMarker = drag?.active ? chart.markers.find(m => m.id === drag.id) : undefined;
+  const joinTarget = drag?.active && drag.joinId ? chart.markers.find(m => m.id === drag.joinId) : undefined;
+  const markerCenter = (m: ChartMarker) => ({
+    x: padLR + m.stringIndex * cellW,
+    y: padTop + (m.fretIndex - 0.5) * cellH,
+  });
+
   const isFieldFocused = (type: string, index?: number): boolean => {
     if (!focusedInput) return false;
     if (focusedInput.type !== type) return false;
@@ -78,7 +183,7 @@ export default function ChordDiagram({
 
   return (
     <svg
-      ref={svgRef}
+      ref={setSvgRefs}
       xmlns="http://www.w3.org/2000/svg"
       width={width}
       height={height}
@@ -188,8 +293,8 @@ export default function ChordDiagram({
           const y = padTop + f * cellH;
           return (
             <rect key={`cell-${s}-${fretIndex}`} x={Math.max(0, x)} y={y} width={cellW} height={cellH} fill="transparent"
-              style={{ cursor: draggingMarker ? 'crosshair' : 'pointer' }}
-              onClick={() => { if (draggingMarker) { onMarkerDrop?.(s, fretIndex); } else { onCellClick?.(s, fretIndex); } }}
+              style={{ cursor: 'pointer' }}
+              onClick={() => onCellClick?.(s, fretIndex)}
             />
           );
         })
@@ -215,21 +320,30 @@ export default function ChordDiagram({
         );
       })}
 
+      {/* ── Join preview: a line from the dragged dot to the dot it will join ── */}
+      {draggedMarker && joinTarget && (
+        <line
+          x1={markerCenter(draggedMarker).x} y1={markerCenter(draggedMarker).y}
+          x2={markerCenter(joinTarget).x} y2={markerCenter(joinTarget).y}
+          stroke={accent} strokeWidth={4} strokeLinecap="round" opacity={0.85}
+        />
+      )}
+
       {/* ── Markers ── */}
       {chart.markers.map(marker => {
         const cx = padLR + marker.stringIndex * cellW;
         const cy = padTop + (marker.fretIndex - 0.5) * cellH;
         const isSelected = selectedMarkerId === marker.id;
-        const isDragging = draggingMarker === marker.id;
+        const isDragging = drag?.active === true && drag.id === marker.id;
         const strokeColor = isSelected ? accent : fg;
         const strokeW = isSelected ? 2 : 1.3;
         const hasLabel = marker.label && marker.label.trim().length > 0;
 
         return (
           <g key={marker.id}
-            style={{ cursor: interactive ? (isDragging ? 'grabbing' : 'grab') : 'default', opacity: isDragging ? 0.5 : 1 }}
-            onClick={(e) => { e.stopPropagation(); if (interactive) onMarkerClick?.(marker.id); }}
-            onMouseDown={(e) => { if (interactive && e.button === 0) { e.stopPropagation(); onMarkerDragStart?.(marker.id); } }}
+            style={{ cursor: interactive ? (isDragging ? 'grabbing' : 'grab') : 'default', opacity: isDragging ? 0.3 : 1, touchAction: interactive ? 'none' : undefined }}
+            onClick={(e) => { e.stopPropagation(); if (interactive && !suppressClick.current) onMarkerClick?.(marker.id); }}
+            onPointerDown={(e) => { if (interactive) { e.stopPropagation(); startMarkerDrag(e, marker); } }}
           >
             {hasLabel ? (
               <>
@@ -253,6 +367,21 @@ export default function ChordDiagram({
           </g>
         );
       })}
+
+      {/* ── Drag feedback: ring on the dot you'll join, or a ghost dot where this one will land ── */}
+      {draggedMarker && joinTarget && (
+        <circle cx={markerCenter(joinTarget).x} cy={markerCenter(joinTarget).y} r={markerR + 3.5} fill="none" stroke={accent} strokeWidth={2.5} pointerEvents="none" />
+      )}
+      {draggedMarker && drag && !joinTarget && (
+        drag.cell ? (
+          <g pointerEvents="none">
+            <rect x={padLR + drag.cell.s * cellW - cellW / 2} y={padTop + (drag.cell.f - 1) * cellH} width={cellW} height={cellH} fill={accent} opacity={0.12} />
+            <circle cx={padLR + drag.cell.s * cellW} cy={padTop + (drag.cell.f - 0.5) * cellH} r={markerR} fill={accent} opacity={0.85} />
+          </g>
+        ) : (
+          <circle cx={drag.px} cy={drag.py} r={markerR} fill={accent} opacity={0.35} pointerEvents="none" />
+        )
+      )}
 
       {/* ── Bottom note labels ── */}
       {chart.bottomNoteLabels.map((label, i) => {

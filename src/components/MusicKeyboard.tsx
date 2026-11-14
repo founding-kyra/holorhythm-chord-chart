@@ -23,10 +23,12 @@ export default function MusicKeyboard({ onInput, onBackspace, onSpace }: MusicKe
   return (
     <div className="music-keyboard">
       <div className="keyboard-util-row">
-        <button className="key-util" onMouseDown={e => { e.preventDefault(); onBackspace(); }}>
-          <span style={{ fontSize: 15, marginRight: 4 }}>{'\u2190'}</span> BACK
+        {/* Pointer events fire once per tap for mouse, touch and pen. Using mousedown + touchstart
+            together typed every key twice on phones. */}
+        <button className="key-util key-backspace" aria-label="Backspace" onPointerDown={e => { e.preventDefault(); onBackspace(); }}>
+          <span style={{ fontSize: 18 }}>{'\u232B'}</span>
         </button>
-        <button className="key-util" onMouseDown={e => { e.preventDefault(); onSpace(); }}>
+        <button className="key-util" onPointerDown={e => { e.preventDefault(); onSpace(); }}>
           SPACE
         </button>
       </div>
@@ -51,7 +53,7 @@ function KeyRow({ keys, onInput, group }: { keys: string[]; onInput: (v: string)
 function KeyButton({ label, value, onInput, group }: { label: string; value: string; onInput: (v: string) => void; group: string }) {
   const [pressed, setPressed] = useState(false);
 
-  const handleDown = useCallback((e: React.MouseEvent | React.TouchEvent) => {
+  const handleDown = useCallback((e: React.PointerEvent) => {
     e.preventDefault();
     setPressed(true);
     onInput(value);
@@ -63,8 +65,7 @@ function KeyButton({ label, value, onInput, group }: { label: string; value: str
   return (
     <button
       className={`music-key ${group} ${pressed ? 'pressed' : ''} ${isWide ? 'wide' : ''}`}
-      onMouseDown={handleDown}
-      onTouchStart={handleDown}
+      onPointerDown={handleDown}
       tabIndex={-1}
     >
       {label}

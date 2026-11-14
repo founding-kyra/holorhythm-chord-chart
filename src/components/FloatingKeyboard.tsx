@@ -1,5 +1,6 @@
 import React, { useState, useRef, useCallback, useEffect } from 'react';
 import MusicKeyboard from './MusicKeyboard';
+import { useIsPhone } from '../utils/useIsPhone';
 
 interface FloatingKeyboardProps {
   inputLabel: string;
@@ -10,19 +11,6 @@ interface FloatingKeyboardProps {
   onSpace: () => void;
   /** Extra toolbar content rendered above the keyboard (e.g. marker controls) */
   toolbarContent?: React.ReactNode;
-}
-
-/** True on phone-sized screens, where the keyboard only shows while something is being edited. */
-function useIsPhone() {
-  const query = '(max-width: 768px)';
-  const [isPhone, setIsPhone] = useState(() => window.matchMedia(query).matches);
-  useEffect(() => {
-    const mq = window.matchMedia(query);
-    const onChange = () => setIsPhone(mq.matches);
-    mq.addEventListener('change', onChange);
-    return () => mq.removeEventListener('change', onChange);
-  }, []);
-  return isPhone;
 }
 
 type AnchorPosition = 'float' | 'bottom-left' | 'bottom-right' | 'bottom-center';
