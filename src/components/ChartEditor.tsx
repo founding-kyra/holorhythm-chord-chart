@@ -1,7 +1,7 @@
 import React, { useState, useCallback, useEffect, useMemo, useRef } from 'react';
 import { createPortal } from 'react-dom';
 import { useApp } from '../store/AppContext';
-import { ChartMarker } from '../types';
+import { ChartMarker, getFretLabels } from '../types';
 import ChordDiagram from './ChordDiagram';
 import FloatingKeyboard from './FloatingKeyboard';
 import { PlusIcon, SaveIcon } from './Icons';
@@ -50,7 +50,7 @@ export default function ChartEditor() {
       }
       case 'bottomNote': return currentChart.bottomNoteLabels[activeInput.index];
       case 'bottomInterval': return currentChart.bottomIntervalLabels[activeInput.index];
-      case 'startFret': return String(currentChart.startFret || '');
+      case 'startFret': return getFretLabels(currentChart)[activeInput.fretIndex - 1] ?? '';
     }
   };
 
@@ -142,11 +142,13 @@ export default function ChartEditor() {
         return true;
       }
       case 'startFret': {
-        // The fret number: digits only, 1-24. Having a number turns the thick nut into a thin line.
+        // Each left dot has its own number: digits only, 1-24, and no leading zero.
         if (!/^\d{0,2}$/.test(value)) return false;
-        const n = value === '' ? 0 : parseInt(value, 10);
-        if (n > 24) return false;
-        updateChart({ startFret: n, nutThickness: n > 0 ? 'thin' : 'thick' });
+        if (value !== '' && (value.startsWith('0') || parseInt(value, 10) > 24)) return false;
+        const labels = [...getFretLabels(currentChart)];
+        labels[activeInput.fretIndex - 1] = value;
+        // A chart that doesn't start at the first fret has a thin nut; one with no numbers has the thick nut.
+        updateChart({ fretLabels: labels, startFret: 0, nutThickness: labels.some(l => l !== '') ? 'thin' : 'thick' });
         return true;
       }
     }

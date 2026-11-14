@@ -3,7 +3,7 @@
  * Uses the SAME fixed 200x280 viewBox as the React component
  * so the output is pixel-identical at every size.
  */
-import { ChartData } from '../types';
+import { ChartData, getFretLabels } from '../types';
 
 const NUM_STRINGS = 6;
 const NUM_FRETS = 5;
@@ -48,10 +48,11 @@ export function renderChartToSVG(
   const nutW = chart.nutThickness === 'thick' ? 3.5 : 1;
   svg += `<line x1="${padLR}" y1="${padTop}" x2="${padLR + gridW}" y2="${padTop}" stroke="${fg}" stroke-width="${nutW}" stroke-linecap="square"/>`;
 
-  // Fret number (when nut is thin and startFret is set)
-  if (chart.nutThickness === 'thin' && chart.startFret && chart.startFret > 0) {
-    svg += `<text x="${padLR - 8}" y="${padTop + cellH * 0.5}" dy="0.35em" text-anchor="end" font-family="Inter,sans-serif" font-size="11" font-weight="700" fill="${fg}">${chart.startFret}</text>`;
-  }
+  // Fret numbers: each row on the left can hold its own number
+  getFretLabels(chart).forEach((label, f) => {
+    if (!label) return;
+    svg += `<text x="${padLR - 8}" y="${padTop + (f + 0.5) * cellH}" dy="0.35em" text-anchor="end" font-family="Inter,sans-serif" font-size="11" font-weight="700" fill="${fg}">${label}</text>`;
+  });
 
   // Fret lines
   for (let f = 1; f <= NUM_FRETS; f++) {

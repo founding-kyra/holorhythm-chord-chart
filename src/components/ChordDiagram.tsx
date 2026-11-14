@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
-import { ChartData, ChartMarker } from '../types';
+import { ChartData, ChartMarker, getFretLabels } from '../types';
 
 interface ChordDiagramProps {
   chart: ChartData;
@@ -77,6 +77,8 @@ export default function ChordDiagram({
   const markerR = Math.min(cellW, cellH) * 0.40;
   // Editor-only tap dots (not drawn in exports). Big enough for a fingertip.
   const editorDotR = 6;
+
+  const fretLabels = getFretLabels(chart);
 
   const getMarkerAt = (s: number, f: number): ChartMarker | undefined =>
     chart.markers.find(m => m.stringIndex === s && m.fretIndex === f);
@@ -237,29 +239,30 @@ export default function ChordDiagram({
         <rect x={padLR} y={padTop - 4} width={gridW} height={8} fill="transparent" style={{ cursor: 'pointer' }} onClick={() => onNutClick?.()} />
       )}
 
-      {/* ── Fret Number (shown when nut is thin and startFret > 0) ── */}
-      {chart.nutThickness === 'thin' && (chart.startFret || 0) > 0 && (
+      {/* ── Fret numbers: each row on the left can hold its own number ── */}
+      {fretLabels.map((label, f) => label ? (
         <text
+          key={`fret-label-${f}`}
           x={padLR - 10}
-          y={padTop + cellH * 0.5}
+          y={padTop + (f + 0.5) * cellH}
           textAnchor="end"
           dominantBaseline="central"
           fontFamily="Inter, sans-serif"
           fontSize="11"
           fontWeight="700"
-          fill={isFieldFocused('startFret', chart.startFret) ? accent : fg}
+          fill={isFieldFocused('startFret', f + 1) ? accent : fg}
           style={{ cursor: interactive ? 'pointer' : 'default' }}
-          onClick={() => interactive && onStartFretClick?.(chart.startFret)}
+          onClick={() => interactive && onStartFretClick?.(f + 1)}
         >
-          {chart.startFret}
+          {label}
         </text>
-      )}
+      ) : null)}
 
       {/* ── Editor-only: dots on each fret row (left side). Tap one, then type the fret number. ── */}
       {interactive && Array.from({ length: NUM_FRETS }, (_, f) => {
         const fretIndex = f + 1;
         const y = padTop + (fretIndex - 0.5) * cellH;
-        const numberShownHere = fretIndex === 1 && chart.nutThickness === 'thin' && (chart.startFret || 0) > 0;
+        const numberShownHere = fretLabels[f] !== '';
         const isFocused = isFieldFocused('startFret', fretIndex);
         return (
           <g key={`fret-dot-${f}`}>
