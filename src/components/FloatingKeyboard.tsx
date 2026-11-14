@@ -12,6 +12,19 @@ interface FloatingKeyboardProps {
   toolbarContent?: React.ReactNode;
 }
 
+/** True on phone-sized screens, where the keyboard only shows while something is being edited. */
+function useIsPhone() {
+  const query = '(max-width: 768px)';
+  const [isPhone, setIsPhone] = useState(() => window.matchMedia(query).matches);
+  useEffect(() => {
+    const mq = window.matchMedia(query);
+    const onChange = () => setIsPhone(mq.matches);
+    mq.addEventListener('change', onChange);
+    return () => mq.removeEventListener('change', onChange);
+  }, []);
+  return isPhone;
+}
+
 type AnchorPosition = 'float' | 'bottom-left' | 'bottom-right' | 'bottom-center';
 
 export default function FloatingKeyboard({
@@ -29,6 +42,7 @@ export default function FloatingKeyboard({
   const [dragging, setDragging] = useState(false);
   const [dragOffset, setDragOffset] = useState({ x: 0, y: 0 });
   const panelRef = useRef<HTMLDivElement>(null);
+  const isPhone = useIsPhone();
 
   // When switching to float, place in center-bottom
   useEffect(() => {
@@ -76,6 +90,9 @@ export default function FloatingKeyboard({
     left: pos.x,
     top: pos.y,
   } : {};
+
+  // On a phone the keyboard would otherwise take a third of the screen all the time.
+  if (isPhone && !isActive && !toolbarContent) return null;
 
   return (
     <div

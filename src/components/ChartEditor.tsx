@@ -524,13 +524,13 @@ export default function ChartEditor() {
         <button className="btn btn-secondary" onClick={handleNew}>New Chart</button>
         <button className="btn btn-primary" onClick={handleSave}>Save Chart</button>
         <button
-          className="btn btn-secondary"
+          className="btn btn-secondary toolbar-nav"
           onClick={() => handleNavigate('library')}
         >
           Library
         </button>
         <button
-          className="btn btn-secondary"
+          className="btn btn-secondary toolbar-nav"
           onClick={() => handleNavigate('composer')}
         >
           Lesson Sheet
