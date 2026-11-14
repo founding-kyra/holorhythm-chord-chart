@@ -9,6 +9,10 @@ interface FloatingKeyboardProps {
   onInput: (value: string) => void;
   onBackspace: () => void;
   onSpace: () => void;
+  /** Where the text cursor is (index into inputValue). Defaults to the end. */
+  caret?: number;
+  onCaretChange?: (index: number) => void;
+  onMoveCaret?: (delta: -1 | 1) => void;
   /** Extra toolbar content rendered above the keyboard (e.g. marker controls) */
   toolbarContent?: React.ReactNode;
 }
@@ -22,6 +26,9 @@ export default function FloatingKeyboard({
   onInput,
   onBackspace,
   onSpace,
+  caret,
+  onCaretChange,
+  onMoveCaret,
   toolbarContent,
 }: FloatingKeyboardProps) {
   const [minimized, setMinimized] = useState(false);
@@ -31,6 +38,7 @@ export default function FloatingKeyboard({
   const [dragOffset, setDragOffset] = useState({ x: 0, y: 0 });
   const panelRef = useRef<HTMLDivElement>(null);
   const isPhone = useIsPhone();
+  const caretIndex = Math.max(0, Math.min(caret ?? inputValue.length, inputValue.length));
 
   // When switching to float, place in center-bottom
   useEffect(() => {
@@ -151,14 +159,32 @@ export default function FloatingKeyboard({
           {isActive && (
             <div className="input-display">
               <span className="input-label">{inputLabel}</span>
-              <span className="input-value">
-                {inputValue}
-                <span className="cursor-blink">|</span>
+              <span
+                className="input-value"
+                onPointerDown={e => { if (e.target === e.currentTarget) { e.preventDefault(); onCaretChange?.(inputValue.length); } }}
+              >
+                {/* Each character is tappable: tap the left half to put the cursor before it, the right half after it. */}
+                {Array.from(inputValue).map((ch, i) => (
+                  <React.Fragment key={i}>
+                    {i === caretIndex && <span className="cursor-blink">|</span>}
+                    <span
+                      className="input-char"
+                      onPointerDown={e => {
+                        e.preventDefault();
+                        const r = e.currentTarget.getBoundingClientRect();
+                        onCaretChange?.(e.clientX < r.left + r.width / 2 ? i : i + 1);
+                      }}
+                    >
+                      {ch}
+                    </span>
+                  </React.Fragment>
+                ))}
+                {caretIndex >= inputValue.length && <span className="cursor-blink">|</span>}
               </span>
             </div>
           )}
 
-          <MusicKeyboard onInput={onInput} onBackspace={onBackspace} onSpace={onSpace} />
+          <MusicKeyboard onInput={onInput} onBackspace={onBackspace} onSpace={onSpace} onMoveCaret={onMoveCaret} />
         </div>
       )}
     </div>

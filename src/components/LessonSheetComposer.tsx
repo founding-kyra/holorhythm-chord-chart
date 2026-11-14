@@ -2,7 +2,7 @@ import React, { useState, useRef, useCallback, useEffect, useMemo } from 'react'
 import { useApp } from '../store/AppContext';
 import { SheetNote, createEmptyChart, createEmptySheet } from '../types';
 import ChordDiagram from './ChordDiagram';
-import FloatingKeyboard from './FloatingKeyboard';
+import { beginPointerDrag, justDragged } from '../utils/pointerDrag';
 import { exportSheetToPDF } from '../utils/pdfExport';
 
 type SheetInputTarget =
@@ -26,10 +26,10 @@ export default function LessonSheetComposer() {
   const { state, dispatch } = useApp();
   const { currentSheet, charts, theme } = state;
   const [activeInput, setActiveInput] = useState<SheetInputTarget | null>(null);
-  const [draggingSlot, setDraggingSlot] = useState<number | null>(null);
-  const [dragOverSlot, setDragOverSlot] = useState<number | null>(null);
-  const [draggingNote, setDraggingNote] = useState<string | null>(null);
-  const [dragOffset, setDragOffset] = useState({ x: 0, y: 0 });
+  // A chart being dragged to another square: where it started, where the finger/mouse is, and which square it's over
+  const [slotDrag, setSlotDrag] = useState<{ from: number; x: number; y: number; over: number | null } | null>(null);
+  const scrollAreaRef = useRef<HTMLDivElement>(null);
+  const inputRef = useRef<HTMLInputElement | null>(null);
   const [pickerSlot, setPickerSlot] = useState<number | null>(null);
   const [titleCase, setTitleCase] = useState<TitleCase>('normal');
   const [showSaveOptions, setShowSaveOptions] = useState(false);
@@ -49,79 +49,72 @@ export default function LessonSheetComposer() {
     [dispatch]
   );
 
-  const getInputValue = (): string => {
-    if (!activeInput) return '';
-    switch (activeInput.type) {
-      case 'sheetTitle': return currentSheet.title;
-      case 'note': {
-        const n = currentSheet.notes.find(n => n.id === activeInput.noteId);
-        return n?.text || '';
-      }
-    }
+  const setTitle = (title: string) => updateSheet({ title });
+  const setNoteText = (noteId: string, text: string) =>
+    updateSheet({ notes: currentSheet.notes.map(n => n.id === noteId ? { ...n, text } : n) });
+
+  // ♭ ♯ Δ ø buttons: insert a symbol at the cursor of whichever text field is being edited
+  const insertSymbol = (symbol: string) => {
+    const el = inputRef.current;
+    if (!el || !activeInput) return;
+    const start = el.selectionStart ?? el.value.length;
+    const end = el.selectionEnd ?? start;
+    const next = el.value.slice(0, start) + symbol + el.value.slice(end);
+    if (activeInput.type === 'sheetTitle') setTitle(next);
+    else setNoteText(activeInput.noteId, next);
+    requestAnimationFrame(() => { el.focus(); el.setSelectionRange(start + symbol.length, start + symbol.length); });
   };
 
-  const getInputLabel = (): string => {
-    if (!activeInput) return 'Click a field to edit';
-    switch (activeInput.type) {
-      case 'sheetTitle': return 'Sheet Title';
-      case 'note': return 'Note Text';
-    }
+  // Drag a chart to another square (mouse, or touch: press and hold, then drag). Swaps the two squares.
+  const slotAt = (x: number, y: number): number | null => {
+    const el = document.elementFromPoint(x, y)?.closest('[data-slot]') as HTMLElement | null;
+    return el ? Number(el.dataset.slot) : null;
   };
 
-  const handleKeyboardInput = useCallback(
-    (value: string) => {
-      if (!activeInput) return;
-      switch (activeInput.type) {
-        case 'sheetTitle':
-          updateSheet({ title: currentSheet.title + value });
-          break;
-        case 'note': {
-          const notes = currentSheet.notes.map(n =>
-            n.id === activeInput.noteId ? { ...n, text: n.text + value } : n
-          );
-          updateSheet({ notes });
-          break;
-        }
+  const startSlotDrag = (e: React.PointerEvent, index: number) => {
+    if (!currentSheet.slots[index]) return;
+    if ((e.target as HTMLElement).closest('.slot-remove')) return;
+    let lastX = e.clientX;
+    let lastY = e.clientY;
+    let scrollTimer: ReturnType<typeof setInterval> | undefined;
+
+    const stopScrolling = () => { if (scrollTimer) clearInterval(scrollTimer); scrollTimer = undefined; };
+    // Keep the sheet scrolling while the chart is held near an edge, so it can be carried across a wide sheet
+    const autoScroll = () => {
+      const area = scrollAreaRef.current;
+      if (!area) return;
+      const r = area.getBoundingClientRect();
+      const edge = 56;
+      const dx = lastX < r.left + edge ? -14 : lastX > r.right - edge ? 14 : 0;
+      const dy = lastY < r.top + edge ? -14 : lastY > r.bottom - edge ? 14 : 0;
+      if (dx || dy) {
+        area.scrollBy(dx, dy);
+        setSlotDrag(d => d && { ...d, over: slotAt(lastX, lastY) });
       }
-    },
-    [activeInput, currentSheet, updateSheet]
-  );
+    };
 
-  const handleBackspace = useCallback(() => {
-    if (!activeInput) return;
-    switch (activeInput.type) {
-      case 'sheetTitle':
-        updateSheet({ title: currentSheet.title.slice(0, -1) });
-        break;
-      case 'note': {
-        const notes = currentSheet.notes.map(n =>
-          n.id === activeInput.noteId ? { ...n, text: n.text.slice(0, -1) } : n
-        );
-        updateSheet({ notes });
-        break;
-      }
-    }
-  }, [activeInput, currentSheet, updateSheet]);
-
-  const handleSpace = useCallback(() => {
-    handleKeyboardInput(' ');
-  }, [handleKeyboardInput]);
-
-  // Slot drag & drop (reorder)
-  const handleSlotDragStart = (slotIndex: number) => { setDraggingSlot(slotIndex); };
-  const handleSlotDragOver = (e: React.DragEvent, targetIndex: number) => { e.preventDefault(); setDragOverSlot(targetIndex); };
-  const handleSlotDragLeave = () => { setDragOverSlot(null); };
-  const handleSlotDrop = (targetIndex: number) => {
-    if (draggingSlot === null || draggingSlot === targetIndex) { setDraggingSlot(null); setDragOverSlot(null); return; }
-    const slots = [...currentSheet.slots];
-    const temp = slots[draggingSlot];
-    slots[draggingSlot] = slots[targetIndex];
-    slots[targetIndex] = temp;
-    updateSheet({ slots });
-    setDraggingSlot(null);
-    setDragOverSlot(null);
+    beginPointerDrag(e, {
+      onStart: (x, y) => {
+        lastX = x; lastY = y;
+        setSlotDrag({ from: index, x, y, over: slotAt(x, y) });
+        scrollTimer = setInterval(autoScroll, 30);
+      },
+      onMove: (x, y) => {
+        lastX = x; lastY = y;
+        setSlotDrag({ from: index, x, y, over: slotAt(x, y) });
+      },
+      onEnd: (x, y) => {
+        stopScrolling();
+        const target = slotAt(x, y);
+        setSlotDrag(null);
+        if (target === null || target === index) return;
+        const slots = [...currentSheet.slots];
+        [slots[index], slots[target]] = [slots[target], slots[index]];
+        updateSheet({ slots });
+      },
+      onCancel: () => { stopScrolling(); setSlotDrag(null); },
+    });
   };
-  const handleSlotDragEnd = () => { setDraggingSlot(null); setDragOverSlot(null); };
 
   const removeFromSlot = (index: number) => {
     const slots = [...currentSheet.slots];
@@ -190,24 +183,23 @@ export default function LessonSheetComposer() {
     if (activeInput?.type === 'note' && activeInput.noteId === noteId) setActiveInput(null);
   };
 
-  const handleNoteDragStart = (noteId: string, e: React.MouseEvent) => {
+  // Move a note: mouse drag, or press and hold then drag on touch
+  const startNoteDrag = (e: React.PointerEvent, noteId: string) => {
+    if ((e.target as HTMLElement).closest('input, .note-delete')) return;
     const note = currentSheet.notes.find(n => n.id === noteId);
-    if (!note || !sheetRef.current) return;
-    const rect = sheetRef.current.getBoundingClientRect();
-    setDraggingNote(noteId);
-    setDragOffset({ x: e.clientX - rect.left - note.x, y: e.clientY - rect.top - note.y });
+    const sheet = sheetRef.current;
+    if (!note || !sheet) return;
+    const rect = sheet.getBoundingClientRect();
+    const offX = e.clientX - rect.left - note.x;
+    const offY = e.clientY - rect.top - note.y;
+    const place = (x: number, y: number) => {
+      const r = sheet.getBoundingClientRect();
+      const nx = Math.max(0, Math.min(r.width - 50, x - r.left - offX));
+      const ny = Math.max(0, Math.min(r.height - 30, y - r.top - offY));
+      updateSheet({ notes: currentSheet.notes.map(n => n.id === noteId ? { ...n, x: nx, y: ny } : n) });
+    };
+    beginPointerDrag(e, { onStart: place, onMove: place, onEnd: () => {} });
   };
-
-  const handleMouseMove = (e: React.MouseEvent) => {
-    if (!draggingNote || !sheetRef.current) return;
-    const rect = sheetRef.current.getBoundingClientRect();
-    const x = Math.max(0, Math.min(rect.width - 50, e.clientX - rect.left - dragOffset.x));
-    const y = Math.max(0, Math.min(rect.height - 30, e.clientY - rect.top - dragOffset.y));
-    const notes = currentSheet.notes.map(n => n.id === draggingNote ? { ...n, x, y } : n);
-    updateSheet({ notes });
-  };
-
-  const handleMouseUp = () => { setDraggingNote(null); };
 
   const handleExportPDF = async () => { await exportSheetToPDF(currentSheet, charts, theme); };
 
@@ -215,6 +207,7 @@ export default function LessonSheetComposer() {
   const handleSaveOverwrite = () => {
     dispatch({ type: 'SAVE_SHEET' });
     setShowSaveOptions(false);
+    dispatch({ type: 'SHOW_TOAST', message: 'Saved' });
   };
 
   const handleSaveNewCopy = () => {
@@ -231,6 +224,7 @@ export default function LessonSheetComposer() {
     setShowSaveOptions(false);
     // Navigate to library so saved sheet is not "active" anymore
     dispatch({ type: 'SET_ACTIVE_VIEW', view: 'library' });
+    dispatch({ type: 'SHOW_TOAST', message: 'Saved as a new copy' });
   };
 
   const handleSaveToLibrary = () => {
@@ -242,6 +236,7 @@ export default function LessonSheetComposer() {
       // First save — just save and go to library
       dispatch({ type: 'SAVE_SHEET' });
       dispatch({ type: 'SET_ACTIVE_VIEW', view: 'library' });
+      dispatch({ type: 'SHOW_TOAST', message: 'Saved to library' });
     }
   };
 
@@ -251,50 +246,61 @@ export default function LessonSheetComposer() {
     dispatch({ type: 'SET_ACTIVE_VIEW', view: 'editor' });
   };
 
-  useEffect(() => {
-    const handler = (e: KeyboardEvent) => {
-      if (!activeInput) return;
-      if (e.key === 'Backspace') { e.preventDefault(); handleBackspace(); }
-      else if (e.key === ' ') { e.preventDefault(); handleSpace(); }
-      else if (e.key.length === 1 && !e.metaKey && !e.ctrlKey) { e.preventDefault(); handleKeyboardInput(e.key); }
-    };
-    window.addEventListener('keydown', handler);
-    return () => window.removeEventListener('keydown', handler);
-  }, [activeInput, handleBackspace, handleSpace, handleKeyboardInput]);
+
 
   const displayTitle = titleCase === 'normal' ? currentSheet.title : applyCase(currentSheet.title, titleCase);
 
   return (
     <div className="lesson-sheet-composer">
       <div className="composer-toolbar">
-        <button className="btn btn-secondary toolbar-nav" onClick={() => dispatch({ type: 'SET_ACTIVE_VIEW', view: 'editor' })}>
-          Back to Editor
-        </button>
-        <button className="btn btn-secondary toolbar-nav" onClick={() => dispatch({ type: 'SET_ACTIVE_VIEW', view: 'library' })}>
-          Library
-        </button>
         <button className="btn btn-secondary" onClick={addNote}>Add Note</button>
         <button className="btn btn-primary" onClick={handleSaveToLibrary}>Save to Library</button>
         <button className="btn btn-primary" onClick={handleExportPDF}>Export PDF</button>
       </div>
 
-      <div className="composer-scroll-area">
+      {activeInput && (
+        <div className="symbol-strip" aria-label="Music symbols">
+          <span className="symbol-strip-label">Symbols</span>
+          {['\u266D', '\u266F', '\u0394', '\u00F8'].map(sym => (
+            <button
+              key={sym}
+              className="symbol-btn"
+              // pointerdown + preventDefault keeps the text field focused so the phone keyboard stays open
+              onPointerDown={e => { e.preventDefault(); insertSymbol(sym); }}
+            >
+              {sym}
+            </button>
+          ))}
+        </div>
+      )}
+
+      <div className="composer-scroll-area" ref={scrollAreaRef}>
         <div
           ref={sheetRef}
           className="sheet-page"
-          onMouseMove={handleMouseMove}
-          onMouseUp={handleMouseUp}
-          onMouseLeave={handleMouseUp}
         >
           {/* Header */}
           <div className="sheet-header" style={{ display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-            <div
-              className={`sheet-title-field ${activeInput?.type === 'sheetTitle' ? 'active' : ''}`}
-              onClick={() => setActiveInput({ type: 'sheetTitle' })}
-            >
-              {displayTitle || 'Click to add title'}
-              {activeInput?.type === 'sheetTitle' && <span className="cursor-blink">|</span>}
-            </div>
+            {activeInput?.type === 'sheetTitle' ? (
+              // A real text field, so your phone's own keyboard opens and you can type a song name
+              <input
+                ref={el => { inputRef.current = el; }}
+                className="sheet-title-input"
+                type="text"
+                value={currentSheet.title}
+                placeholder="Song / lesson title"
+                autoFocus
+                autoCapitalize="words"
+                enterKeyHint="done"
+                onChange={e => setTitle(e.target.value)}
+                onBlur={() => setActiveInput(null)}
+                onKeyDown={e => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur(); }}
+              />
+            ) : (
+              <div className="sheet-title-field" onClick={() => setActiveInput({ type: 'sheetTitle' })}>
+                {displayTitle || 'Click to add title'}
+              </div>
+            )}
             {/* Title case toggle */}
             <div className="title-case-toggle">
               <button className={`case-btn ${titleCase === 'normal' ? 'active' : ''}`} onClick={() => setTitleCase('normal')}>Aa</button>
@@ -308,19 +314,17 @@ export default function LessonSheetComposer() {
           <div className="sheet-grid">
             {currentSheet.slots.map((chartId, i) => {
               const chart = chartId ? charts.find(c => c.id === chartId) : null;
-              const isDragOver = dragOverSlot === i && draggingSlot !== i;
+              const isDragOver = slotDrag !== null && slotDrag.over === i && slotDrag.from !== i;
+              const isBeingDragged = slotDrag?.from === i;
               const isSelected = selectedSlots.has(i);
               return (
                 <div
                   key={i}
-                  className={`sheet-slot ${draggingSlot === i ? 'dragging' : ''} ${isDragOver ? 'drag-over' : ''} ${isSelected ? 'drag-over' : ''}`}
-                  draggable={!!chartId}
-                  onDragStart={() => handleSlotDragStart(i)}
-                  onDragOver={e => handleSlotDragOver(e, i)}
-                  onDragLeave={handleSlotDragLeave}
-                  onDrop={() => handleSlotDrop(i)}
-                  onDragEnd={handleSlotDragEnd}
-                  onClick={e => handleSlotClick(i, e)}
+                  data-slot={i}
+                  className={`sheet-slot ${chart ? 'has-chart' : ''} ${isBeingDragged ? 'dragging' : ''} ${isDragOver ? 'drag-over' : ''} ${isSelected ? 'drag-over' : ''}`}
+                  onPointerDown={e => startSlotDrag(e, i)}
+                  onContextMenu={e => { if (chart) e.preventDefault(); }}
+                  onClick={e => { if (!justDragged()) handleSlotClick(i, e); }}
                 >
                   {isDragOver && <div className="drag-indicator-bar" />}
 
@@ -343,23 +347,40 @@ export default function LessonSheetComposer() {
           </div>
 
           {/* Movable notes */}
-          {currentSheet.notes.map(note => (
-            <div
-              key={note.id}
-              className={`sheet-note ${activeInput?.type === 'note' && activeInput.noteId === note.id ? 'active' : ''}`}
-              style={{ left: note.x, top: note.y, position: 'absolute' }}
-              onMouseDown={e => handleNoteDragStart(note.id, e)}
-              onClick={() => setActiveInput({ type: 'note', noteId: note.id })}
-            >
-              <span className="note-text">
-                {note.text || 'Click to edit'}
-                {activeInput?.type === 'note' && activeInput.noteId === note.id && <span className="cursor-blink">|</span>}
-              </span>
-              <button className="note-delete" onClick={e => { e.stopPropagation(); deleteNote(note.id); }}>
-                {'\u00D7'}
-              </button>
-            </div>
-          ))}
+          {currentSheet.notes.map(note => {
+            const editing = activeInput?.type === 'note' && activeInput.noteId === note.id;
+            return (
+              <div
+                key={note.id}
+                className={`sheet-note ${editing ? 'active' : ''}`}
+                style={{ left: note.x, top: note.y, position: 'absolute' }}
+                onPointerDown={e => startNoteDrag(e, note.id)}
+                onClick={() => { if (!justDragged()) setActiveInput({ type: 'note', noteId: note.id }); }}
+              >
+                {editing ? (
+                  // A real text field, so your phone's own keyboard opens
+                  <input
+                    ref={el => { inputRef.current = el; }}
+                    className="note-input"
+                    type="text"
+                    value={note.text}
+                    placeholder="Type a note"
+                    size={Math.max(10, note.text.length + 1)}
+                    autoFocus
+                    enterKeyHint="done"
+                    onChange={e => setNoteText(note.id, e.target.value)}
+                    onBlur={() => setActiveInput(null)}
+                    onKeyDown={e => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur(); }}
+                  />
+                ) : (
+                  <span className="note-text">{note.text || 'Tap to edit'}</span>
+                )}
+                <button className="note-delete" onClick={e => { e.stopPropagation(); deleteNote(note.id); }}>
+                  {'\u00D7'}
+                </button>
+              </div>
+            );
+          })}
 
           {/* Footer */}
           <div className="sheet-footer">HOLORHYTHM.ORG &copy; 2026</div>
@@ -410,15 +431,15 @@ export default function LessonSheetComposer() {
         </div>
       )}
 
-      {/* Floating keyboard */}
-      <FloatingKeyboard
-        inputLabel={getInputLabel()}
-        inputValue={getInputValue()}
-        isActive={!!activeInput}
-        onInput={handleKeyboardInput}
-        onBackspace={handleBackspace}
-        onSpace={handleSpace}
-      />
+      {/* The chart you're dragging, following your finger or mouse */}
+      {slotDrag && (() => {
+        const dragged = charts.find(c => c.id === currentSheet.slots[slotDrag.from]);
+        return dragged ? (
+          <div className="slot-ghost" style={{ left: slotDrag.x, top: slotDrag.y }}>
+            <ChordDiagram chart={dragged} width={110} height={144} theme={theme} />
+          </div>
+        ) : null;
+      })()}
     </div>
   );
 }

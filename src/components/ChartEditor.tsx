@@ -21,21 +21,16 @@ export default function ChartEditor() {
   const [activeInput, setActiveInput] = useState<InputTarget | null>(null);
   const [connectMode, setConnectMode] = useState<string | null>(null);
   const [selectedConnectorId, setSelectedConnectorId] = useState<string | null>(null);
-  const [showUnsavedDialog, setShowUnsavedDialog] = useState(false);
-  const [pendingView, setPendingView] = useState<'library' | 'composer' | null>(null);
-  const [hasUnsavedChanges, setHasUnsavedChanges] = useState(false);
   const [showSaveOptions, setShowSaveOptions] = useState(false);
+  // Text cursor position inside the active field (null = at the end)
+  const [caret, setCaret] = useState<number | null>(null);
   const isPhone = useIsPhone();
   // On phones New / Save live as icon buttons in the app header instead of taking a row.
   const [headerSlot, setHeaderSlot] = useState<HTMLElement | null>(null);
   useEffect(() => { setHeaderSlot(document.getElementById('header-actions')); }, []);
-  const lastSavedRef = useRef(JSON.stringify(currentChart));
 
-  // Track unsaved changes
-  useEffect(() => {
-    const current = JSON.stringify(currentChart);
-    setHasUnsavedChanges(current !== lastSavedRef.current);
-  }, [currentChart]);
+  // A newly selected field starts with the cursor at the end
+  useEffect(() => { setCaret(null); }, [activeInput]);
 
   const updateChart = useCallback(
     (updates: Partial<typeof currentChart>) => {
@@ -118,94 +113,67 @@ export default function ChartEditor() {
     });
   };
 
-  const handleKeyboardInput = useCallback(
-    (value: string) => {
-      if (!activeInput) return;
-      switch (activeInput.type) {
-        case 'title':
-          updateChart({ title: currentChart.title + value });
-          break;
-        case 'topIndicator': {
-          const arr = [...currentChart.topIndicators] as [string, string, string, string, string, string];
-          arr[activeInput.index] = arr[activeInput.index] + value;
-          updateChart({ topIndicators: arr });
-          break;
-        }
-        case 'markerLabel': {
-          const markers = currentChart.markers.map(m =>
-            m.id === activeInput.markerId ? { ...m, label: m.label + value } : m
-          );
-          updateChart({ markers });
-          break;
-        }
-        case 'bottomNote': {
-          const arr = [...currentChart.bottomNoteLabels] as [string, string, string, string, string, string];
-          arr[activeInput.index] = arr[activeInput.index] + value;
-          updateChart({ bottomNoteLabels: arr });
-          break;
-        }
-        case 'bottomInterval': {
-          const arr = [...currentChart.bottomIntervalLabels] as [string, string, string, string, string, string];
-          arr[activeInput.index] = arr[activeInput.index] + value;
-          updateChart({ bottomIntervalLabels: arr });
-          break;
-        }
-        case 'startFret': {
-          const digit = parseInt(value, 10);
-          if (!isNaN(digit)) {
-            const current = String(currentChart.startFret || '');
-            const newVal = parseInt(current + value, 10);
-            if (newVal >= 0 && newVal <= 24) {
-              updateChart({ startFret: newVal });
-            }
-          }
-          break;
-        }
-      }
-    },
-    [activeInput, currentChart, updateChart]
-  );
-
-  const handleBackspace = useCallback(() => {
-    if (!activeInput) return;
+  // Write a new value into whichever field is active. Returns false if the value isn't allowed.
+  const setInputValue = useCallback((value: string): boolean => {
+    if (!activeInput) return false;
     switch (activeInput.type) {
       case 'title':
-        updateChart({ title: currentChart.title.slice(0, -1) });
-        break;
+        updateChart({ title: value });
+        return true;
       case 'topIndicator': {
         const arr = [...currentChart.topIndicators] as [string, string, string, string, string, string];
-        arr[activeInput.index] = arr[activeInput.index].slice(0, -1);
+        arr[activeInput.index] = value;
         updateChart({ topIndicators: arr });
-        break;
+        return true;
       }
-      case 'markerLabel': {
-        // Backspace only ever removes one character. Use "Remove Marker" to delete the marker itself.
-        const markers = currentChart.markers.map(m =>
-          m.id === activeInput.markerId ? { ...m, label: m.label.slice(0, -1) } : m
-        );
-        updateChart({ markers });
-        break;
-      }
+      case 'markerLabel':
+        updateChart({ markers: currentChart.markers.map(m => m.id === activeInput.markerId ? { ...m, label: value } : m) });
+        return true;
       case 'bottomNote': {
         const arr = [...currentChart.bottomNoteLabels] as [string, string, string, string, string, string];
-        arr[activeInput.index] = arr[activeInput.index].slice(0, -1);
+        arr[activeInput.index] = value;
         updateChart({ bottomNoteLabels: arr });
-        break;
+        return true;
       }
       case 'bottomInterval': {
         const arr = [...currentChart.bottomIntervalLabels] as [string, string, string, string, string, string];
-        arr[activeInput.index] = arr[activeInput.index].slice(0, -1);
+        arr[activeInput.index] = value;
         updateChart({ bottomIntervalLabels: arr });
-        break;
+        return true;
       }
       case 'startFret': {
-        const current = String(currentChart.startFret || '');
-        const newStr = current.slice(0, -1);
-        updateChart({ startFret: newStr ? parseInt(newStr, 10) : 0 });
-        break;
+        // The fret number: digits only, 1-24. Having a number turns the thick nut into a thin line.
+        if (!/^\d{0,2}$/.test(value)) return false;
+        const n = value === '' ? 0 : parseInt(value, 10);
+        if (n > 24) return false;
+        updateChart({ startFret: n, nutThickness: n > 0 ? 'thin' : 'thick' });
+        return true;
       }
     }
-  }, [activeInput, currentChart, updateChart, dispatch]);
+  }, [activeInput, currentChart, updateChart]);
+
+  const caretPos = (value: string) => (caret === null ? value.length : Math.min(caret, value.length));
+
+  // Typing inserts at the cursor; backspace removes just the character before it.
+  const handleKeyboardInput = useCallback((value: string) => {
+    if (!activeInput) return;
+    const current = getInputValue();
+    const pos = caretPos(current);
+    if (setInputValue(current.slice(0, pos) + value + current.slice(pos))) setCaret(pos + value.length);
+  }, [activeInput, currentChart, caret, setInputValue]);
+
+  const handleBackspace = useCallback(() => {
+    if (!activeInput) return;
+    const current = getInputValue();
+    const pos = caretPos(current);
+    if (pos === 0) return;
+    if (setInputValue(current.slice(0, pos - 1) + current.slice(pos))) setCaret(pos - 1);
+  }, [activeInput, currentChart, caret, setInputValue]);
+
+  const handleMoveCaret = useCallback((delta: -1 | 1) => {
+    const current = getInputValue();
+    setCaret(Math.max(0, Math.min(current.length, caretPos(current) + delta)));
+  }, [activeInput, currentChart, caret]);
 
   const handleSpace = useCallback(() => {
     handleKeyboardInput(' ');
@@ -313,20 +281,12 @@ export default function ChartEditor() {
     setSelectedConnectorId(null);
   }, []);
 
-  // Fret dot click: clicking a fret dot on the left sets startFret and auto-removes nut
+  // Fret dot click: just selects the fret-number field. The number comes from the keyboard.
   const handleFretDotClick = useCallback((fretIndex: number) => {
-    // If clicking same fret that's already set, clear it and restore thick nut
-    if (currentChart.startFret === fretIndex && currentChart.nutThickness === 'thin') {
-      updateChart({ startFret: 0, nutThickness: 'thick' });
-      setActiveInput(null);
-    } else {
-      // Set fret number and auto-remove nut (set to thin)
-      updateChart({ startFret: fretIndex, nutThickness: 'thin' });
-      setActiveInput({ type: 'startFret', fretIndex });
-    }
+    setActiveInput({ type: 'startFret', fretIndex });
     setSelectedConnectorId(null);
     dispatch({ type: 'SET_SELECTED_MARKER', id: null });
-  }, [currentChart.startFret, currentChart.nutThickness, dispatch, updateChart]);
+  }, [dispatch]);
 
   // Click away: deselect everything
   const handleEditorBgClick = useCallback((e: React.MouseEvent) => {
@@ -378,22 +338,20 @@ export default function ChartEditor() {
   };
 
   const handleSave = () => {
-    // Check if chart already exists in library — if so, show overwrite/copy options
+    // If the chart is already in the library, ask whether to overwrite it or save a copy
     const existsInLibrary = state.charts.some(c => c.id === currentChart.id);
     if (existsInLibrary) {
       setShowSaveOptions(true);
     } else {
       dispatch({ type: 'SAVE_CHART' });
-      lastSavedRef.current = JSON.stringify(currentChart);
-      setHasUnsavedChanges(false);
+      dispatch({ type: 'SHOW_TOAST', message: 'Saved to library' });
     }
   };
 
   const handleSaveOverwrite = () => {
     dispatch({ type: 'SAVE_CHART' });
-    lastSavedRef.current = JSON.stringify(currentChart);
-    setHasUnsavedChanges(false);
     setShowSaveOptions(false);
+    dispatch({ type: 'SHOW_TOAST', message: 'Saved' });
   };
 
   const handleSaveNewCopy = () => {
@@ -406,48 +364,14 @@ export default function ChartEditor() {
     };
     dispatch({ type: 'SET_CURRENT_CHART', chart: newChart });
     dispatch({ type: 'SAVE_CHART' });
-    lastSavedRef.current = JSON.stringify(newChart);
-    setHasUnsavedChanges(false);
     setShowSaveOptions(false);
+    dispatch({ type: 'SHOW_TOAST', message: 'Saved as a new copy' });
   };
 
   const handleNew = () => {
     dispatch({ type: 'NEW_CHART' });
     setActiveInput(null);
     setSelectedConnectorId(null);
-    lastSavedRef.current = JSON.stringify(currentChart);
-  };
-
-  // Navigation with unsaved changes dialog
-  const handleNavigate = useCallback((view: 'library' | 'composer') => {
-    if (hasUnsavedChanges) {
-      setPendingView(view);
-      setShowUnsavedDialog(true);
-    } else {
-      dispatch({ type: 'SET_ACTIVE_VIEW', view });
-    }
-  }, [hasUnsavedChanges, dispatch]);
-
-  const handleDialogSave = () => {
-    dispatch({ type: 'SAVE_CHART' });
-    lastSavedRef.current = JSON.stringify(currentChart);
-    setHasUnsavedChanges(false);
-    setShowUnsavedDialog(false);
-    if (pendingView) dispatch({ type: 'SET_ACTIVE_VIEW', view: pendingView });
-    setPendingView(null);
-  };
-
-  const handleDialogExit = () => {
-    setShowUnsavedDialog(false);
-    setHasUnsavedChanges(false);
-    lastSavedRef.current = JSON.stringify(currentChart);
-    if (pendingView) dispatch({ type: 'SET_ACTIVE_VIEW', view: pendingView });
-    setPendingView(null);
-  };
-
-  const handleDialogCancel = () => {
-    setShowUnsavedDialog(false);
-    setPendingView(null);
   };
 
   // Hardware keyboard support with Tab
@@ -486,7 +410,10 @@ export default function ChartEditor() {
         return;
       }
       if (!activeInput) return;
-      if (e.key === 'Backspace') {
+      if (e.key === 'ArrowLeft' || e.key === 'ArrowRight') {
+        e.preventDefault();
+        handleMoveCaret(e.key === 'ArrowLeft' ? -1 : 1);
+      } else if (e.key === 'Backspace') {
         e.preventDefault();
         handleBackspace();
       } else if (e.key === ' ') {
@@ -499,7 +426,7 @@ export default function ChartEditor() {
     };
     window.addEventListener('keydown', handler);
     return () => window.removeEventListener('keydown', handler);
-  }, [activeInput, handleBackspace, handleSpace, handleKeyboardInput, selectedConnectorId, deleteConnector, tabbableInputs, dispatch]);
+  }, [activeInput, handleBackspace, handleSpace, handleKeyboardInput, handleMoveCaret, selectedConnectorId, deleteConnector, tabbableInputs, dispatch]);
 
   // Build the toolbar content for the floating keyboard
   const toolbarContent = selectedMarker ? (
@@ -538,18 +465,6 @@ export default function ChartEditor() {
       {!isPhone && <div className="editor-toolbar">
         <button className="btn btn-secondary" onClick={handleNew}>New Chart</button>
         <button className="btn btn-primary" onClick={handleSave}>Save Chart</button>
-        <button
-          className="btn btn-secondary toolbar-nav"
-          onClick={() => handleNavigate('library')}
-        >
-          Library
-        </button>
-        <button
-          className="btn btn-secondary toolbar-nav"
-          onClick={() => handleNavigate('composer')}
-        >
-          Lesson Sheet
-        </button>
       </div>}
 
       <div className="editor-main" onClick={handleEditorBgClick}>
@@ -586,21 +501,6 @@ export default function ChartEditor() {
         </div>
       </div>
 
-      {/* Unsaved changes dialog */}
-      {showUnsavedDialog && (
-        <div className="dialog-overlay" onClick={handleDialogCancel}>
-          <div className="dialog-box" onClick={e => e.stopPropagation()}>
-            <h3 className="dialog-title">Save this chord chart?</h3>
-            <p className="dialog-text">You have unsaved changes that will be lost.</p>
-            <div className="dialog-actions">
-              <button className="btn btn-primary" onClick={handleDialogSave}>Save</button>
-              <button className="btn btn-danger" onClick={handleDialogExit}>Exit Without Saving</button>
-              <button className="btn btn-secondary" onClick={handleDialogCancel}>Cancel</button>
-            </div>
-          </div>
-        </div>
-      )}
-
       {/* Save options dialog */}
       {showSaveOptions && (
         <div className="dialog-overlay" onClick={() => setShowSaveOptions(false)}>
@@ -629,6 +529,9 @@ export default function ChartEditor() {
         onInput={handleKeyboardInput}
         onBackspace={handleBackspace}
         onSpace={handleSpace}
+        caret={caret ?? undefined}
+        onCaretChange={setCaret}
+        onMoveCaret={handleMoveCaret}
         toolbarContent={toolbarContent}
       />
     </div>

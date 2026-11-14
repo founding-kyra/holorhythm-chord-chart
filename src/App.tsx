@@ -5,7 +5,7 @@ import ChartEditor from './components/ChartEditor';
 import ChartLibrary from './components/ChartLibrary';
 import LessonSheetComposer from './components/LessonSheetComposer';
 import ThemeToggle from './components/ThemeToggle';
-import { MenuIcon, EditorIcon, LibraryIcon, SheetIcon, MoonIcon, SunIcon, SignOutIcon } from './components/Icons';
+import { MenuIcon, EditorIcon, LibraryIcon, SheetIcon, MoonIcon, SunIcon, SignOutIcon, CheckIcon } from './components/Icons';
 
 type View = 'editor' | 'library' | 'composer';
 const VIEWS: { id: View; label: string; Icon: typeof EditorIcon }[] = [
@@ -26,6 +26,14 @@ export default function App() {
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
   }, [drawerOpen]);
+
+  // Auto-hide the confirmation toast
+  const toastId = state.toast?.id;
+  useEffect(() => {
+    if (toastId === undefined) return;
+    const t = setTimeout(() => dispatch({ type: 'HIDE_TOAST' }), 2400);
+    return () => clearTimeout(t);
+  }, [toastId, dispatch]);
 
   const goTo = (view: View) => {
     dispatch({ type: 'SET_ACTIVE_VIEW', view });
@@ -117,6 +125,12 @@ export default function App() {
               <SignOutIcon /> Sign out
             </button>
           </aside>
+        </div>
+      )}
+
+      {state.toast && (
+        <div className="toast" role="status" key={state.toast.id}>
+          <CheckIcon size={18} /> {state.toast.message}
         </div>
       )}
 

@@ -32,3 +32,6 @@ export const SunIcon = (p: IconProps) => (
 export const SignOutIcon = (p: IconProps) => (
   <Svg {...p}><path d="M10 4H5v16h5" /><path d="M15 8l4 4-4 4M19 12H9" /></Svg>
 );
+export const CheckIcon = (p: IconProps) => <Svg {...p}><path d="M5 12.5l4.5 4.5L19 7.5" /></Svg>;
+export const ChevronLeftIcon = (p: IconProps) => <Svg {...p}><path d="M14 6l-6 6 6 6" /></Svg>;
+export const ChevronRightIcon = (p: IconProps) => <Svg {...p}><path d="M10 6l6 6-6 6" /></Svg>;

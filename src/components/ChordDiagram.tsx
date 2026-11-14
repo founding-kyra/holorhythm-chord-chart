@@ -75,7 +75,8 @@ export default function ChordDiagram({
   const cellW = gridW / (NUM_STRINGS - 1);
   const cellH = gridH / NUM_FRETS;
   const markerR = Math.min(cellW, cellH) * 0.40;
-  const editorDotR = 4;
+  // Editor-only tap dots (not drawn in exports). Big enough for a fingertip.
+  const editorDotR = 6;
 
   const getMarkerAt = (s: number, f: number): ChartMarker | undefined =>
     chart.markers.find(m => m.stringIndex === s && m.fretIndex === f);
@@ -221,10 +222,10 @@ export default function ChordDiagram({
               </text>
             )}
             {interactive && !hasValue && (
-              <circle cx={x} cy={padTop - 10} r={editorDotR} fill={isFocused ? accent : fg} opacity={isFocused ? 0.7 : 0.2} />
+              <circle cx={x} cy={padTop - 19} r={editorDotR} fill={isFocused ? accent : fg} opacity={isFocused ? 0.8 : 0.28} />
             )}
             {interactive && (
-              <rect x={x - cellW / 2} y={padTop - 22} width={cellW} height={20} fill="transparent" style={{ cursor: 'pointer' }} onClick={() => onTopIndicatorClick?.(i)} />
+              <rect x={x - cellW / 2} y={padTop - 36} width={cellW} height={30} fill="transparent" style={{ cursor: 'pointer' }} onClick={() => onTopIndicatorClick?.(i)} />
             )}
           </g>
         );
@@ -233,7 +234,7 @@ export default function ChordDiagram({
       {/* ── Nut line ── */}
       <line x1={padLR} y1={padTop} x2={padLR + gridW} y2={padTop} stroke={fg} strokeWidth={chart.nutThickness === 'thick' ? 3.5 : 1} strokeLinecap="square" style={{ cursor: interactive ? 'pointer' : 'default' }} onClick={() => interactive && onNutClick?.()} />
       {interactive && (
-        <rect x={padLR} y={padTop - 5} width={gridW} height={10} fill="transparent" style={{ cursor: 'pointer' }} onClick={() => onNutClick?.()} />
+        <rect x={padLR} y={padTop - 4} width={gridW} height={8} fill="transparent" style={{ cursor: 'pointer' }} onClick={() => onNutClick?.()} />
       )}
 
       {/* ── Fret Number (shown when nut is thin and startFret > 0) ── */}
@@ -254,21 +255,18 @@ export default function ChordDiagram({
         </text>
       )}
 
-      {/* ── Editor-only: grey dots on EACH fret row (left side) ── */}
+      {/* ── Editor-only: dots on each fret row (left side). Tap one, then type the fret number. ── */}
       {interactive && Array.from({ length: NUM_FRETS }, (_, f) => {
         const fretIndex = f + 1;
         const y = padTop + (fretIndex - 0.5) * cellH;
-        const isActive = chart.nutThickness === 'thin' && chart.startFret === fretIndex;
+        const numberShownHere = fretIndex === 1 && chart.nutThickness === 'thin' && (chart.startFret || 0) > 0;
         const isFocused = isFieldFocused('startFret', fretIndex);
         return (
           <g key={`fret-dot-${f}`}>
-            {!isActive && (
-              <circle cx={padLR - 14} cy={y} r={editorDotR} fill={isFocused ? accent : fg} opacity={isFocused ? 0.7 : 0.15} />
+            {!numberShownHere && (
+              <circle cx={padLR - 15} cy={y} r={editorDotR} fill={isFocused ? accent : fg} opacity={isFocused ? 0.8 : 0.25} />
             )}
-            {isActive && (
-              <circle cx={padLR - 14} cy={y} r={editorDotR + 1} fill={accent} opacity={0.8} />
-            )}
-            <rect x={0} y={padTop + f * cellH} width={padLR - 4} height={cellH} fill="transparent" style={{ cursor: 'pointer' }} onClick={(e) => { e.stopPropagation(); onStartFretClick?.(fretIndex); }} />
+            <rect x={0} y={padTop + f * cellH} width={padLR - 2} height={cellH} fill="transparent" style={{ cursor: 'pointer' }} onClick={(e) => { e.stopPropagation(); onStartFretClick?.(fretIndex); }} />
           </g>
         );
       })}
@@ -392,8 +390,8 @@ export default function ChordDiagram({
         return (
           <g key={`bnl-${i}`}>
             {hasValue && <text x={x} y={y} textAnchor="middle" fontFamily="Inter, sans-serif" fontSize="9" fill={isFocused ? accent : fg} opacity={isFocused ? 1 : 0.5}>{label}</text>}
-            {interactive && !hasValue && <circle cx={x} cy={y - 3} r={editorDotR - 1} fill={isFocused ? accent : fg} opacity={isFocused ? 0.7 : 0.15} />}
-            {interactive && <rect x={x - cellW / 2} y={y - 10} width={cellW} height={16} fill="transparent" style={{ cursor: 'pointer' }} onClick={() => onBottomNoteLabelClick?.(i)} />}
+            {interactive && !hasValue && <circle cx={x} cy={y - 3} r={4.5} fill={isFocused ? accent : fg} opacity={isFocused ? 0.8 : 0.28} />}
+            {interactive && <rect x={x - cellW / 2} y={y - 10} width={cellW} height={14} fill="transparent" style={{ cursor: 'pointer' }} onClick={() => onBottomNoteLabelClick?.(i)} />}
           </g>
         );
       })}
@@ -407,8 +405,8 @@ export default function ChordDiagram({
         return (
           <g key={`bil-${i}`}>
             {hasValue && <text x={x} y={y} textAnchor="middle" fontFamily="Inter, sans-serif" fontSize="10" fontWeight="600" fill={isFocused ? accent : fg}>{label}</text>}
-            {interactive && !hasValue && <circle cx={x} cy={y - 3} r={editorDotR - 1} fill={isFocused ? accent : fg} opacity={isFocused ? 0.7 : 0.15} />}
-            {interactive && <rect x={x - cellW / 2} y={y - 10} width={cellW} height={16} fill="transparent" style={{ cursor: 'pointer' }} onClick={() => onBottomIntervalLabelClick?.(i)} />}
+            {interactive && !hasValue && <circle cx={x} cy={y - 3} r={4.5} fill={isFocused ? accent : fg} opacity={isFocused ? 0.8 : 0.28} />}
+            {interactive && <rect x={x - cellW / 2} y={y - 10} width={cellW} height={14} fill="transparent" style={{ cursor: 'pointer' }} onClick={() => onBottomIntervalLabelClick?.(i)} />}
           </g>
         );
       })}

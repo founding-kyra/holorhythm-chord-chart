@@ -12,6 +12,8 @@ interface AppState {
   loadError: string | null;
   /** Set when a save was rejected or failed; the UI shows a banner. */
   saveError: { message: string; conflict: boolean } | null;
+  /** Brief confirmation message (e.g. "Saved"). */
+  toast: { id: number; message: string } | null;
   charts: ChartData[];
   sheets: SheetData[];
   trashedCharts: TrashedChart[];
@@ -29,6 +31,8 @@ type Action =
   | { type: 'HYDRATE_ERROR'; error: string }
   | { type: 'SAVE_ERROR'; message: string; conflict: boolean }
   | { type: 'SAVE_OK' }
+  | { type: 'SHOW_TOAST'; message: string }
+  | { type: 'HIDE_TOAST' }
   | { type: 'RETRY_HYDRATE' }
   | { type: 'SET_CURRENT_CHART'; chart: ChartData }
   | { type: 'UPDATE_CURRENT_CHART'; chart: Partial<ChartData> }
@@ -74,6 +78,12 @@ function reducer(state: AppState, action: Action): AppState {
 
     case 'SAVE_ERROR':
       return { ...state, saveError: { message: action.message, conflict: action.conflict } };
+
+    case 'SHOW_TOAST':
+      return { ...state, toast: { id: Date.now(), message: action.message } };
+
+    case 'HIDE_TOAST':
+      return state.toast ? { ...state, toast: null } : state;
 
     case 'SAVE_OK':
       return state.saveError ? { ...state, saveError: null } : state;
@@ -216,6 +226,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     isLoading: true,
     loadError: null,
     saveError: null,
+    toast: null,
     charts: [],
     sheets: [],
     trashedCharts: [],

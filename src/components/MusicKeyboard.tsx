@@ -4,7 +4,7 @@ import { useApp } from '../store/AppContext';
 const ROW1 = ['C', 'D', 'E', 'F', 'G', 'A', 'B', '\u266D', '\u266F', '-'];
 const ROW2 = ['1', '2', '3', '4', '5', '6', '7', '9', 'o', '\u00F8', '\u0394'];
 const ROW3 = ['(', ')', '/', 'sus', 'add', 'alt', '+', 'X', 'O'];
-const ROW4 = ['m', 'M', 'P'];
+const ROW4 = ['R', 'm', 'M', 'P'];
 
 const KEY_LABELS: Record<string, string> = {
   '\u266D': '\u266D',
@@ -17,9 +17,11 @@ interface MusicKeyboardProps {
   onInput: (value: string) => void;
   onBackspace: () => void;
   onSpace: () => void;
+  /** Move the text cursor one character left (-1) or right (1). */
+  onMoveCaret?: (delta: -1 | 1) => void;
 }
 
-export default function MusicKeyboard({ onInput, onBackspace, onSpace }: MusicKeyboardProps) {
+export default function MusicKeyboard({ onInput, onBackspace, onSpace, onMoveCaret }: MusicKeyboardProps) {
   return (
     <div className="music-keyboard">
       <div className="keyboard-util-row">
@@ -28,6 +30,16 @@ export default function MusicKeyboard({ onInput, onBackspace, onSpace }: MusicKe
         <button className="key-util key-backspace" aria-label="Backspace" onPointerDown={e => { e.preventDefault(); onBackspace(); }}>
           <span style={{ fontSize: 18 }}>{'\u232B'}</span>
         </button>
+        {onMoveCaret && (
+          <>
+            <button className="key-util key-arrow" aria-label="Move cursor left" onPointerDown={e => { e.preventDefault(); onMoveCaret(-1); }}>
+              {'\u25C0'}
+            </button>
+            <button className="key-util key-arrow" aria-label="Move cursor right" onPointerDown={e => { e.preventDefault(); onMoveCaret(1); }}>
+              {'\u25B6'}
+            </button>
+          </>
+        )}
         <button className="key-util" onPointerDown={e => { e.preventDefault(); onSpace(); }}>
           SPACE
         </button>

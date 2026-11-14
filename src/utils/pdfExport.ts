@@ -1,6 +1,7 @@
 import jsPDF from 'jspdf';
 import { SheetData, ChartData, createEmptyChart } from '../types';
 import { renderChartToSVG } from './svgExport';
+import { SYMBOL_CHARS, SYMBOL_FONT_NAME, SYMBOL_FONT_REGULAR_B64, SYMBOL_FONT_BOLD_B64 } from './symbolFont';
 
 const LETTER_W_PT = 612;  // 8.5"
 const LETTER_H_PT = 792;  // 11"
@@ -11,28 +12,112 @@ const ROWS = 4;
 // The SVG viewBox aspect ratio: 200/280 = 5:7
 const CHART_ASPECT = 200 / 280;
 
-// Musical symbol mapping: Unicode → ASCII-safe fallback for fonts that lack these glyphs
-const SYMBOL_MAP: Record<string, string> = {
-  '\u266D': 'b',     // ♭ → b
-  '\u266F': '#',     // ♯ → #
-  '\u0394': 'Δ',     // Δ (keep, usually in Helvetica)
-  '\u00F8': 'ø',     // ø (keep, usually in Helvetica)
-  '\u2014': '-',     // em dash → hyphen
-};
+const SVG_NS = 'http://www.w3.org/2000/svg';
+
+/** Make the symbol font available to jsPDF (and svg2pdf, which draws chart text through it). */
+function registerSymbolFont(doc: jsPDF): void {
+  doc.addFileToVFS('HRSymbols-Regular.ttf', SYMBOL_FONT_REGULAR_B64);
+  doc.addFont('HRSymbols-Regular.ttf', SYMBOL_FONT_NAME, 'normal');
+  doc.addFileToVFS('HRSymbols-Bold.ttf', SYMBOL_FONT_BOLD_B64);
+  doc.addFont('HRSymbols-Bold.ttf', SYMBOL_FONT_NAME, 'bold');
+}
+
+/** Split text into runs: symbols that Helvetica lacks, and everything else. */
+function splitSymbolRuns(text: string): { text: string; symbol: boolean }[] {
+  const runs: { text: string; symbol: boolean }[] = [];
+  for (const ch of text) {
+    const symbol = SYMBOL_CHARS.test(ch);
+    const last = runs[runs.length - 1];
+    if (last && last.symbol === symbol) last.text += ch;
+    else runs.push({ text: ch, symbol });
+  }
+  return runs;
+}
 
 /**
- * Replace musical Unicode symbols with font-safe equivalents in SVG text nodes.
- * svg2pdf.js uses the PDF's built-in Helvetica which lacks ♭ and ♯ glyphs.
- * We replace them with ASCII equivalents that render correctly.
+ * Chart text is drawn by svg2pdf with Helvetica, which has no flat, sharp or delta glyph
+ * (they used to be swapped for "b" / "#", and delta came out as a quote mark).
+ *
+ * Here each label that contains one of those symbols is split into runs, and the runs are
+ * placed one after another. Symbols use the embedded symbol font; everything else keeps the
+ * same font, size, colour and weight it had. Widths are measured with the PDF's own font
+ * metrics, because svg2pdf measures with the browser, which doesn't know the embedded font.
  */
-function replaceMusicalSymbols(svgEl: Element): void {
+function useSymbolFontForSymbols(svgEl: Element, doc: jsPDF): void {
+  const savedFont = doc.getFont();
+  const savedSize = doc.getFontSize();
+
   svgEl.querySelectorAll('text').forEach(textEl => {
-    let content = textEl.textContent || '';
-    for (const [unicode, replacement] of Object.entries(SYMBOL_MAP)) {
-      content = content.split(unicode).join(replacement);
-    }
-    textEl.textContent = content;
+    const content = textEl.textContent || '';
+    if (!SYMBOL_CHARS.test(content)) return;
+
+    const fontSize = parseFloat(textEl.getAttribute('font-size') || '10') || 10;
+    const attr = textEl.getAttribute('font-weight') || '400';
+    const weight = attr === 'bold' ? 700 : attr === 'normal' ? 400 : parseInt(attr, 10) || 400;
+    // svg2pdf draws Helvetica bold only at weight 700, and finds the symbol font at 400 or 700
+    const helveticaStyle = weight >= 700 ? 'bold' : 'normal';
+    const symbolStyle = weight >= 600 ? 'bold' : 'normal';
+    const symbolWeight = weight >= 600 ? '700' : '400';
+
+    const runs = splitSymbolRuns(content);
+    doc.setFontSize(fontSize);
+    const widths = runs.map(r => {
+      doc.setFont(r.symbol ? SYMBOL_FONT_NAME : 'helvetica', r.symbol ? symbolStyle : helveticaStyle);
+      return doc.getTextWidth(r.text);
+    });
+    const total = widths.reduce((a, b) => a + b, 0);
+
+    const x = parseFloat(textEl.getAttribute('x') || '0') || 0;
+    const anchor = textEl.getAttribute('text-anchor') || 'start';
+    let cursor = anchor === 'middle' ? x - total / 2 : anchor === 'end' ? x - total : x;
+
+    runs.forEach((run, i) => {
+      const piece = textEl.cloneNode(false) as Element; // keeps y, size, colour, opacity, baseline...
+      // svg2pdf trims leading spaces, so skip over them ourselves
+      const lead = run.text.match(/^\s*/)?.[0] ?? '';
+      let leadWidth = 0;
+      if (lead) {
+        doc.setFont(run.symbol ? SYMBOL_FONT_NAME : 'helvetica', run.symbol ? symbolStyle : helveticaStyle);
+        leadWidth = doc.getTextWidth(lead);
+      }
+      piece.setAttribute('x', String(cursor + leadWidth));
+      piece.setAttribute('text-anchor', 'start');
+      if (run.symbol) {
+        piece.setAttribute('font-family', SYMBOL_FONT_NAME);
+        piece.setAttribute('font-weight', symbolWeight);
+      }
+      piece.textContent = run.text.trim();
+      if (run.text.trim()) textEl.parentNode?.insertBefore(piece, textEl);
+      cursor += widths[i];
+    });
+    textEl.parentNode?.removeChild(textEl);
   });
+
+  doc.setFont(savedFont.fontName, savedFont.fontStyle);
+  doc.setFontSize(savedSize);
+}
+
+/** doc.text(), but draws flat / sharp / delta with the symbol font. Handles left and centered text. */
+function drawText(doc: jsPDF, text: string, x: number, y: number, opts: { bold?: boolean; align?: 'left' | 'center' } = {}): void {
+  const style = opts.bold ? 'bold' : 'normal';
+  if (!SYMBOL_CHARS.test(text)) {
+    doc.setFont('helvetica', style);
+    doc.text(text, x, y, opts.align === 'center' ? { align: 'center' } : undefined);
+    return;
+  }
+  const runs = splitSymbolRuns(text);
+  const widthOf = (r: { text: string; symbol: boolean }) => {
+    doc.setFont(r.symbol ? SYMBOL_FONT_NAME : 'helvetica', style);
+    return doc.getTextWidth(r.text);
+  };
+  const total = runs.reduce((sum, r) => sum + widthOf(r), 0);
+  let cursor = opts.align === 'center' ? x - total / 2 : x;
+  for (const r of runs) {
+    doc.setFont(r.symbol ? SYMBOL_FONT_NAME : 'helvetica', style);
+    doc.text(r.text, cursor, y);
+    cursor += doc.getTextWidth(r.text);
+  }
+  doc.setFont('helvetica', style);
 }
 
 export async function exportSheetToPDF(
@@ -45,6 +130,8 @@ export async function exportSheetToPDF(
     unit: 'pt',
     format: 'letter',
   });
+
+  registerSymbolFont(doc);
 
   const fg = theme === 'dark' ? '#ffffff' : '#000000';
   const bg = theme === 'dark' ? '#000000' : '#ffffff';
@@ -60,8 +147,7 @@ export async function exportSheetToPDF(
   let headerY = MARGIN + 14;
   if (sheet.title) {
     doc.setFontSize(18);
-    doc.setFont('helvetica', 'bold');
-    doc.text(sheet.title, LETTER_W_PT / 2, headerY, { align: 'center' });
+    drawText(doc, sheet.title, LETTER_W_PT / 2, headerY, { bold: true, align: 'center' });
     headerY += 28;
   }
 
@@ -104,8 +190,8 @@ export async function exportSheetToPDF(
       const svgDoc = parser.parseFromString(svgStr, 'image/svg+xml');
       const svgEl = svgDoc.documentElement;
 
-      // Replace musical Unicode symbols with font-safe ASCII equivalents
-      replaceMusicalSymbols(svgEl);
+      // Draw flat / sharp / delta with the embedded symbol font so they survive intact
+      useSymbolFontForSymbols(svgEl, doc);
 
       // Blank placeholders: full 100% opacity black lines (no reduced opacity)
 
@@ -135,7 +221,7 @@ export async function exportSheetToPDF(
   for (const note of sheet.notes) {
     const nx = (note.x / 816) * (LETTER_W_PT - MARGIN * 2) + MARGIN;
     const ny = (note.y / 1056) * (LETTER_H_PT - MARGIN * 2) + MARGIN;
-    doc.text(note.text, nx, ny);
+    drawText(doc, note.text, nx, ny);
   }
 
   // Footer
